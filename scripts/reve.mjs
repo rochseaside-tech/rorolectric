@@ -93,43 +93,61 @@ async function pedir(ruta, params) {
   return { filas: await r.json(), total: +r.headers.get('total-pages') || 1 };
 }
 
-let hechas = 0, terminada = '';
-const ahora = Date.now(), hoy = new Date().toISOString().slice(0, 10);
-while (hechas < POR_HORA) {
-  const t = tarea(ahora);
-  if (!t) { console.log('Todo al día: no hace falta pedir nada ahora'); break; }
-  const c = estado[t];
-  const empieza = c.pag === 1, cuando = new Date().toISOString();
-  const params = { page: c.pag, limit: 100 };
-  // Tarifas: tras la primera pasada completa, solo las que han cambiado (con 1 h de margen).
-  if (t === 'tar' && c.hecha) params.date_from = new Date(Date.parse(c.ultimoInicio) - HORA).toISOString();
-  let res;
-  try { res = await pedir(t === 'loc' ? '/locations' : '/connectors/tariffs', params); } catch (e) { console.warn(e.message); break; }
-  if (res.limite) { console.log('REVE dice que ya van 5 consultas esta hora: se sigue en la próxima'); break; }
-  hechas++;
-  if (empieza) { c.inicio = cuando; c.n = (c.n || 0) + 1; }
-  if (t === 'loc') for (const l of res.filas) guardarSitio(l, c.n);
-  else for (const x of res.filas) { const p = resumir(x.tariffs || [], hoy); if (p) precios[x.connector_id] = p; else delete precios[x.connector_id]; }
-  c.total = res.total;
-  console.log(`${t === 'loc' ? 'Sitios' : 'Tarifas'}: página ${c.pag} de ${c.total}${params.date_from ? ' (solo cambios)' : ''}`);
-  if (c.pag >= c.total || !res.filas.length) {
-    c.hecha = new Date().toISOString(); c.ultimoInicio = c.inicio; c.pag = 1;
-    if (t === 'loc') {
-      // Los que no han salido en las dos últimas pasadas ya no existen.
-      for (const [id, s] of Object.entries(sitios)) if (s.v < c.n - 1) delete sitios[id];
-    }
-    terminada = t;
-    console.log(`Pasada de ${t === 'loc' ? 'sitios' : 'tarifas'} terminada`);
-  } else c.pag++;
+// Una hora de trabajo: hasta 5 consultas. Devuelve qué pasada ha terminado ('loc', 'tar' o '').
+async function unaHora() {
+  let hechas = 0, terminada = '';
+  const ahora = Date.now(), hoy = new Date().toISOString().slice(0, 10);
+  while (hechas < POR_HORA) {
+    const t = tarea(ahora);
+    if (!t) { console.log('Todo al día: no hace falta pedir nada ahora'); break; }
+    const c = estado[t];
+    const empieza = c.pag === 1, cuando = new Date().toISOString();
+    const params = { page: c.pag, limit: 100 };
+    // Tarifas: tras la primera pasada completa, solo las que han cambiado (con 1 h de margen).
+    if (t === 'tar' && c.hecha) params.date_from = new Date(Date.parse(c.ultimoInicio) - HORA).toISOString();
+    let res;
+    try { res = await pedir(t === 'loc' ? '/locations' : '/connectors/tariffs', params); } catch (e) { console.warn(e.message); break; }
+    if (res.limite) { console.log('REVE dice que ya van 5 consultas esta hora: se sigue en la próxima'); break; }
+    hechas++;
+    if (empieza) { c.inicio = cuando; c.n = (c.n || 0) + 1; }
+    if (t === 'loc') for (const l of res.filas) guardarSitio(l, c.n);
+    else for (const x of res.filas) { const p = resumir(x.tariffs || [], hoy); if (p) precios[x.connector_id] = p; else delete precios[x.connector_id]; }
+    c.total = res.total;
+    console.log(`${t === 'loc' ? 'Sitios' : 'Tarifas'}: página ${c.pag} de ${c.total}${params.date_from ? ' (solo cambios)' : ''}`);
+    if (c.pag >= c.total || !res.filas.length) {
+      c.hecha = new Date().toISOString(); c.ultimoInicio = c.inicio; c.pag = 1;
+      if (t === 'loc') {
+        // Los que no han salido en las dos últimas pasadas ya no existen.
+        for (const [id, s] of Object.entries(sitios)) if (s.v < c.n - 1) delete sitios[id];
+      }
+      terminada = t;
+      console.log(`Pasada de ${t === 'loc' ? 'sitios' : 'tarifas'} terminada`);
+    } else c.pag++;
+  }
+  estado.actualizado = new Date().toISOString();
+  await writeFile(join(DIR, 'estado.json'), JSON.stringify(estado, null, 1));
+  await writeFile(join(DIR, 'sitios.json'), JSON.stringify(sitios));
+  await writeFile(join(DIR, 'precios.json'), JSON.stringify(precios));
+  console.log(`Consultas: ${hechas} · sitios: ${Object.keys(sitios).length} · enchufes con precio: ${Object.keys(precios).length}`);
+  return terminada;
 }
 
-estado.actualizado = new Date().toISOString();
-await writeFile(join(DIR, 'estado.json'), JSON.stringify(estado, null, 1));
-await writeFile(join(DIR, 'sitios.json'), JSON.stringify(sitios));
-await writeFile(join(DIR, 'precios.json'), JSON.stringify(precios));
-console.log(`Consultas: ${hechas} · sitios: ${Object.keys(sitios).length} · enchufes con precio: ${Object.keys(precios).length}`);
-// Al acabar una pasada completa, el workflow vuelve a publicar la app con los datos nuevos.
-// (Los cambios diarios de tarifas ya los recoge la publicación de cada noche.)
-if (process.env.GITHUB_OUTPUT && (terminada === 'loc' || (terminada === 'tar' && estado.tar.n === 1))) {
-  await writeFile(process.env.GITHUB_OUTPUT, `publicar=si\n`, { flag: 'a' });
+// Con REVE_HORAS > 1 se queda trabajando varias horas seguidas (5 consultas cada hora en punto),
+// para no depender de que GitHub lance a tiempo el robot programado.
+const HORAS = Math.max(1, +process.env.REVE_HORAS || 1);
+let publicar = false;
+for (let h = 0; h < HORAS; h++) {
+  const terminada = await unaHora();
+  // Al acabar una pasada completa, el workflow vuelve a publicar la app con los datos nuevos.
+  // (Los cambios diarios de tarifas ya los recoge la publicación de cada noche.)
+  if (terminada === 'loc' || (terminada === 'tar' && estado.tar.n === 1)) publicar = true;
+  if (!tarea(Date.now()) || h === HORAS - 1) break;
+  const proxima = process.env.REVE_ESPERA ? Date.now() + +process.env.REVE_ESPERA // (para probar sin esperar una hora)
+    : (Math.floor(Date.now() / HORA) + 1) * HORA + 90e3; // la hora siguiente y minuto y medio
+  console.log(`Espero a las ${new Date(proxima).toISOString().slice(11, 16)} UTC para las siguientes 5 consultas`);
+  await new Promise((r) => setTimeout(r, proxima - Date.now()));
+}
+if (process.env.GITHUB_OUTPUT) {
+  const queda = !!tarea(Date.now()) && !(estado.loc.hecha && estado.tar.hecha && estado.tar.pag === 1);
+  await writeFile(process.env.GITHUB_OUTPUT, `publicar=${publicar ? 'si' : 'no'}\nseguir=${queda ? 'si' : 'no'}\n`, { flag: 'a' });
 }

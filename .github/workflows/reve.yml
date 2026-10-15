@@ -1,11 +1,12 @@
 # Baja de REVE (Red Eléctrica) los precios oficiales de los cargadores, poco a poco: la clave
-# solo deja 5 consultas por hora. Lo que lleva se guarda en la caché de GitHub entre una hora y
-# la siguiente; «Publicar» lo junta cada noche con la lista de cargadores.
+# solo deja 5 consultas por hora. Cada ejecución trabaja 5 horas seguidas (5 consultas cada hora)
+# y, si queda trabajo, se vuelve a lanzar sola: así no depende de que GitHub cumpla el horario.
+# Lo que lleva se guarda en la caché de GitHub; «Publicar» lo junta cada noche con la lista de cargadores.
 # La clave está en Settings → Secrets → REVE_API_KEY (nunca en el código). Caduca el 15/10/2027.
 name: Precios REVE
 on:
   schedule:
-    - cron: '7,27,47 * * * *'   # 3 intentos por hora (GitHub a veces se salta alguno); si ya se hicieron las 5 consultas, REVE dice «límite» y no pasa nada
+    - cron: '7 */6 * * *'   # de reserva, por si la cadena se corta (y para los cambios diarios de tarifas)
   workflow_dispatch: {}
 permissions:
   contents: read
@@ -16,7 +17,7 @@ concurrency:
 jobs:
   bajar:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 320
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,11 +29,11 @@ jobs:
           path: ~/reve-datos
           key: reve-${{ github.run_id }}
           restore-keys: reve-
-      - name: Bajar 5 páginas de REVE
+      - name: Bajar de REVE durante 5 horas (5 páginas cada hora)
         id: reve
         env:
           REVE_API_KEY: ${{ secrets.REVE_API_KEY }}
-        run: REVE_DIR="$HOME/reve-datos" node scripts/reve.mjs
+        run: REVE_DIR="$HOME/reve-datos" REVE_HORAS=5 node scripts/reve.mjs
       - name: Guardar por dónde va
         if: always()
         uses: actions/cache/save@v4
@@ -49,3 +50,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run publicar.yml --ref main
+      - name: Si queda trabajo, volver a lanzarse
+        if: steps.reve.outputs.seguir == 'si'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run reve.yml --ref main
