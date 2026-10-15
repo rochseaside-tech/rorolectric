@@ -7,9 +7,13 @@ import { ubicacion, ultimaUbicacion, esc, num, abrirHoja, cerrarHoja, capaMapa, 
 import { distancia, kmCon, consumo } from '../calc.js';
 import { OPERADORES, operadorDe } from '../operadores.js';
 
-const FILTROS_BASE = { minKw: 0, ccs: false, tipo2: false, gratis: false, tarjeta: false, h24: false, servicios: [], empresa: '', sinClientes: false, favoritos: false, compatibles: true };
+const FILTROS_BASE = { minKw: 0, ccs: false, tipo2: false, gratis: false, tarjeta: false, h24: false, servicios: [], empresa: '', sinClientes: false, favoritos: false, compatibles: true, conPrecio: false };
 let filtros = leerFiltros();
 let buscarPoste = false; // «Estoy en un cargador»: abrir la ficha del que tienes al lado
+// Vista de precios: los puntos enseñan el €/kWh (de REVE) en vez de los kW.
+let verPrecio = (() => { try { return localStorage.getItem('mapa-precio') === '1'; } catch { return false; } })();
+const BARATO = 0.40, CARO = 0.55; // €/kWh, IVA incluido
+const tramoPrecio = (p) => (p < BARATO ? 'barato' : p <= CARO ? 'normal' : 'caro');
 let mapa = null, capa = null, yo = null, datos = [], visibles = [], marcadores = new Map(), aro = null, verRango = false, dondeEstoy = null, abrirLuego = null;
 
 function leerFiltros() {
@@ -29,6 +33,7 @@ function pasa(c) {
   if (f.tarjeta && !c.tarjeta) return false;
   if (f.h24 && !c.h24) return false;
   if (f.sinClientes && c.clientes) return false;
+  if (f.conPrecio && !c.precio) return false;
   if (f.servicios.length && !f.servicios.some((s) => c.servicios.includes(s))) return false;
   if (f.empresa && operadorDe(c.operador, c.nombre)?.id !== f.empresa) return false;
   return true;
@@ -123,12 +128,20 @@ function pintarAtajos(raiz) {
   const n = cuantos();
   const el = raiz.querySelector('#filtros');
   el.innerHTML = `<button class="chip ${n ? 'activo' : ''}" data-f="todos" style="flex:none">⚙︎ Filtros${n ? ` (${n})` : ''}</button>
+    <button class="chip ${verPrecio ? 'activo' : ''}" data-f="precio" style="flex:none">💶 Precios</button>
     ${ATAJOS.map(([k, t, activo]) => `<button class="chip ${activo() ? 'activo' : ''}" data-f="${k}" style="flex:none">${t}</button>`).join('')}
     <button class="chip ${verRango ? 'activo' : ''}" data-f="rango" style="flex:none">🔋 Hasta dónde llego</button>`;
   el.onclick = (e) => {
     const b = e.target.closest('[data-f]'); if (!b) return;
     if (b.dataset.f === 'todos') { abrirFiltros(raiz); return; }
     if (b.dataset.f === 'rango') { verRango = !verRango; pintarAtajos(raiz); pintarRango(); return; }
+    if (b.dataset.f === 'precio') {
+      verPrecio = !verPrecio;
+      try { localStorage.setItem('mapa-precio', verPrecio ? '1' : '0'); } catch { /* nada */ }
+      pintarAtajos(raiz); dibujar(raiz);
+      if (verPrecio && !hayPrecios()) aviso('Aún no tengo precios: se están bajando de REVE y tardan unos días. Irán saliendo solos.');
+      return;
+    }
     ATAJOS.find(([k]) => k === b.dataset.f)[3]();
     aplicar(raiz);
   };
@@ -152,7 +165,7 @@ function abrirFiltros(raiz) {
     <label class="campo"><span>Enchufe</span><div class="chips">
       ${chip('ccs', 1, 'CCS (rápida)', f.ccs)}${chip('tipo2', 1, 'Tipo 2 (lenta)', f.tipo2)}${chip('compatibles', 1, 'Ocultar los que no valen para mi coche', f.compatibles)}</div></label>
     <label class="campo"><span>Pagar</span><div class="chips">
-      ${chip('gratis', 1, '🎁 Gratis', f.gratis)}${chip('tarjeta', 1, '💳 Tarjeta en el poste', f.tarjeta)}${chip('sinClientes', 1, 'Ocultar «solo clientes»', f.sinClientes)}</div></label>
+      ${chip('gratis', 1, '🎁 Gratis', f.gratis)}${chip('tarjeta', 1, '💳 Tarjeta en el poste', f.tarjeta)}${chip('conPrecio', 1, '💶 Solo con precio', f.conPrecio)}${chip('sinClientes', 1, 'Ocultar «solo clientes»', f.sinClientes)}</div></label>
     <label class="campo"><span>Horario</span><div class="chips">${chip('h24', 1, '🕒 Abierto 24 h', f.h24)}</div></label>
     <label class="campo"><span>Para esperar mientras carga</span><div class="chips">
       ${Object.entries(SERVICIOS).map(([k, t]) => chip('servicios', k, t, f.servicios.includes(k))).join('')}</div></label>
@@ -223,6 +236,7 @@ function dibujar(raiz) {
   visibles = datos.filter(pasa);
   const lista = visibles.filter((c) => !lejos || (c.rapido && c.compatible) || notaDe(c)?.fav);
   for (const c of lista) {
+    if (verPrecio) { pinPrecio(c); continue; }
     const txt = c.potencia ? (c.potencia >= 1000 ? '' : Math.round(c.potencia)) : c.rapido ? '⚡' : '';
     const m = L.marker([c.lat, c.lon], { zIndexOffset: c.rapido ? 500 : 0,
       icon: L.divIcon({ className: '', html: `<div class="pin ${clasePin(c)}" ${notaDe(c)?.fav ? 'style="outline:3px solid #FFD84D;outline-offset:1px"' : ''}><span style="font-size:${String(txt).length > 2 ? 10 : 12}px">${esc(txt)}</span></div>`, iconSize: [28, 28], iconAnchor: [14, 30], popupAnchor: [0, -28] }),
@@ -232,9 +246,35 @@ function dibujar(raiz) {
   const pendiente = abrirLuego && visibles.find((c) => claveCargador(c) === abrirLuego);
   if (pendiente) { abrirLuego = null; abrirFicha(pendiente); }
   const f = fechaLista();
+  if (verPrecio) {
+    const con = lista.filter((c) => c.precio).length;
+    raiz.querySelector('#estado').innerHTML = `${num(con)} con precio de ${num(lista.length)}${lejos ? ' rápidos' : ''}<br>
+      <span class="leyenda-precio" style="background:#3FE0B0"></span>menos de ${num(BARATO, 2)}<span class="leyenda-precio" style="background:#FFB84D"></span>hasta ${num(CARO, 2)}<span class="leyenda-precio" style="background:#FF6B6B"></span>más de ${num(CARO, 2)} €/kWh`;
+    return;
+  }
   raiz.querySelector('#estado').textContent = (lista.length
     ? `${num(lista.length)}${lejos ? ' rápidos' : ''} aquí${lejos ? ' (acerca para ver todos)' : ''}`
     : 'Ninguno aquí con estos filtros') + (f ? ` · lista del ${new Date(f + 'T12:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}` : '');
+}
+
+const hayPrecios = () => datos.some((c) => c.precio);
+
+// Punto de la vista de precios: etiqueta con el precio, o un puntito gris si REVE no lo da.
+function pinPrecio(c) {
+  const p = precioKwh(c), h = c.precio?.[4];
+  const fav = notaDe(c)?.fav ? 'outline:3px solid #FFD84D;outline-offset:1px;' : '';
+  let icono;
+  if (p != null || h) {
+    const txt = p != null ? num(p, 2) : `${num(h, 1)} €/h`;
+    const tramo = p != null ? tramoPrecio(p) : 'normal';
+    const ancho = txt.length * 8 + 20;
+    icono = L.divIcon({ className: '', html: `<div class="pin-precio ${tramo}" style="${fav}">${esc(txt)}</div>`, iconSize: [ancho, 24], iconAnchor: [ancho / 2, 30] });
+  } else {
+    icono = L.divIcon({ className: '', html: `<div class="pin-sin" style="${fav}"></div>`, iconSize: [10, 10], iconAnchor: [5, 5] });
+  }
+  // Los baratos, por encima de los caros cuando se pisan.
+  const m = L.marker([c.lat, c.lon], { icon: icono, zIndexOffset: p != null ? Math.round(2000 - p * 1000) : -1000 }).on('click', () => abrirFicha(c)).addTo(capa);
+  marcadores.set(claveCargador(c), m);
 }
 
 export function salir() { mapa?.remove(); mapa = null; capa = null; yo = null; aro = null; }
