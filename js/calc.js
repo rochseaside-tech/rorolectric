@@ -298,14 +298,17 @@ export function consumoMedido(cargas) {
   const despues = cargas.filter((c) => c !== primera && c.fecha >= primera.fecha && c.fecha <= ultima.fecha && !(+c.km > 0 && +c.km <= primera.km));
   const kwhBateria = despues.reduce((s, c) => s + (+c.kwh || 0) * (c.lugar === 'rapida' ? PERDIDAS_DC : PERDIDAS_AC), 0);
   const v = kwhBateria / km * 100;
-  return v > 8 && v < 40 ? { kwh100: v, km } : null;
+  // Si sale muy por debajo de lo normal para este coche es que falta alguna carga por apuntar (gratis, en casa de alguien…):
+  // mejor no usarlo, porque inflaría la autonomía. Muy por encima, algún dato mal puesto.
+  const normal = COCHE.consumo?.mixto || 17;
+  return v > normal * 0.75 && v < normal * 1.6 ? { kwh100: v, km } : null;
 }
 
 // Salud de la batería con tus cargas: si metiste X kWh y el % subió Y puntos, la batería entera tiene X / Y × 100.
 // Solo cargas con «desde» y «hasta» apuntados y al menos 30 puntos de subida (con menos, el error del % del coche pesa mucho).
 // Devuelve la mediana de las últimas 10 (para que una carga mal apuntada no la tuerza).
 export function saludBateria(cargas, utilFabrica) {
-  const validas = cargas.filter((c) => +c.kwh > 0 && c.desde !== '' && c.hasta !== '' && c.desde != null && c.hasta != null && +c.hasta - +c.desde >= 30)
+  const validas = cargas.filter((c) => !c.kwhEstimado && +c.kwh > 0 && c.desde !== '' && c.hasta !== '' && c.desde != null && c.hasta != null && +c.hasta - +c.desde >= 30)
     .slice(0, 10)
     .map((c) => (+c.kwh * (c.lugar === 'rapida' ? PERDIDAS_DC : PERDIDAS_AC)) / ((+c.hasta - +c.desde) / 100))
     .filter((v) => v > utilFabrica * 0.5 && v < utilFabrica * 1.3)

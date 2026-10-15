@@ -121,7 +121,7 @@ function actualizar(raiz) {
   const destino = llegoA ? `<p class="muy-suave" style="margin:0 0 4px">${esc(llegoA.emoji || '📍')} ${esc(llegoA.nombre)}: ${num(+raiz.querySelector('#llego-km').value)} km por carretera, unas ${duracion(llegoA.horas * 60)}${+raiz.querySelector('#llego-iv').value === 2 ? ' (×2 ida y vuelta)' : ''}</p>` : '';
   const viaje = llegoA && llegada < 15 ? `<a class="boton mini" style="margin-top:8px" href="#/viaje/${encodeURIComponent(llegoA.nombre)}">Ver dónde parar</a>` : '';
   res.innerHTML = `<div class="resultado ${clase}" style="margin-top:12px">${destino}<div class="grande">${texto}</div>
-    <p>${llegada >= 15 ? 'Con margen de sobra para imprevistos.' : llegada >= 5 ? 'Mejor para un rato a cargar por el camino o al llegar.' : `Necesitas unos ${Math.ceil(15 - llegada)} puntos más de batería. Mira la pestaña Viaje: te dice dónde parar.`}</p>${viaje}</div>`;
+    <p>${llegada >= 15 ? 'Con margen de sobra para imprevistos.' : llegada >= 5 ? 'Mejor para un rato a cargar por el camino o al llegar.' : 15 - llegada > 100 - pct ? 'Ni con la batería llena: toca parar a cargar por el camino. Viaje te dice dónde.' : `Necesitas unos ${Math.ceil(15 - llegada)} puntos más de batería. Mira la pestaña Viaje: te dice dónde parar.`}</p>${viaje}</div>`;
 }
 
 // La temperatura se puede poner a mano (p. ej. para saber la autonomía mañana a primera hora).

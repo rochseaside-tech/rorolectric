@@ -192,7 +192,7 @@ table.ficha td:last-child { text-align: right; color: var(--texto); font-weight:
 
 /* Mapa */
 .mapa-envoltorio { position: relative; margin: 0 -16px; }
-#mapa, .mapa { height: calc(100dvh - 58px - 84px - 166px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); min-height: 320px; background: var(--tarjeta2); }
+#mapa, .mapa { height: calc(100dvh - 58px - 84px - 100px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); min-height: 320px; background: var(--tarjeta2); }
 .mapa.bajo { height: 300px; border-radius: var(--radio); margin-bottom: 14px; }
 .mapa-botones { position: absolute; right: 12px; bottom: 16px; z-index: 500; display: grid; gap: 8px; }
 .mapa-botones button { width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--tarjeta); color: var(--texto); box-shadow: var(--sombra); font-size: 20px; cursor: pointer; }

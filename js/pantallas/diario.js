@@ -10,7 +10,7 @@ function tarjetaSalud(todas) {
   const s = saludBateria(todas, fabrica);
   if (!s.util) {
     return `<section class="tarjeta"><h2>🔋 Salud de la batería</h2>
-      <p class="suave">Apunta en 3 cargas el % al llegar y al acabar (que suba al menos 30 puntos) y te digo cuánta batería real le queda a tu coche. ${s.n ? `Llevas ${s.n} de 3.` : ''}</p></section>`;
+      <p class="suave">Apunta en 3 cargas el % al llegar y al acabar (que suba al menos 30 puntos) y los kWh que marque el poste o el cargador de casa y te digo cuánta batería real le queda a tu coche. ${s.n ? `Llevas ${s.n} de 3.` : ''}</p></section>`;
   }
   const pct = Math.round(s.pct);
   const corregida = ajustes().correccion?.util;
@@ -31,7 +31,7 @@ export const LUGARES = {
 
 let raizActual = null;
 
-export function pintar(raiz) {
+export function pintar(raiz, [accion] = []) {
   raizActual = raiz;
   const todas = cargas();
   const r = resumen(todas, ajustes());
@@ -57,7 +57,7 @@ export function pintar(raiz) {
     ${tarjetaSalud(todas)}
     ${Object.entries(meses).map(([mes, lista]) => `
       <section class="tarjeta">
-        <div class="tarjeta-cab"><h2 style="text-transform:capitalize">${new Date(mes + '-15').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}</h2>
+        <div class="tarjeta-cab"><h2>${((t) => t[0].toUpperCase() + t.slice(1))(new Date(mes + '-15').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }))}</h2>
           <b>${euros(lista.reduce((s, c) => s + (+c.euros || 0), 0))}</b></div>
         <ul class="lista">${lista.map((c) => `
           <li data-id="${esc(c.id)}" style="cursor:pointer"><span class="icono">${LUGARES[c.lugar]?.[0] || '⚡'}</span>
@@ -76,6 +76,7 @@ export function pintar(raiz) {
     </section>`;
 
   raiz.querySelector('#nueva').onclick = () => abrirFormCarga({});
+  if (accion === 'nueva') { history.replaceState(null, '', '#/diario'); abrirFormCarga({}); } // acceso directo del icono
   raiz.querySelector('#usar-salud')?.addEventListener('click', (e) => {
     corregirCoche('util', Math.round(+e.target.dataset.util * 10) / 10);
     aviso('Hecho: la autonomía se calcula ya con esa batería'); pintar(raiz);
@@ -132,6 +133,16 @@ async function guardarCopia() {
 }
 
 // Formulario de una carga (nueva o para corregir). Lo usa también la pantalla Cargar.
+// €/kWh que se supone si no lo apunta: en casa, el de su tarifa de noche; en la calle, los de Ajustes.
+function precioDe(lugar) {
+  const a = ajustes();
+  if (lugar === 'gratis') return 0;
+  if (lugar === 'rapida') return +a.precioRapida;
+  if (lugar === 'lenta') return +a.precioLenta;
+  return a.tarifa === 'fija' ? +a.precioFijo : a.tarifa === 'tramos' ? +a.tramos.valle : 0.12; // PVPC de madrugada, aprox.
+}
+const ultimosKm = () => Math.max(0, ...cargas().map((x) => +x.km || 0)) || '';
+
 export function abrirFormCarga(c = {}) {
   const nueva = !c.id;
   const v = { fecha: hoyISO(), lugar: 'casa', sitio: '', kwh: '', euros: '', desde: '', hasta: '', km: ajustes().kmActuales || '', nota: '', ...c };
@@ -140,11 +151,12 @@ export function abrirFormCarga(c = {}) {
     <form id="form-carga">
       <label class="campo"><span>Dónde</span><div class="chips" id="lugares">${Object.entries(LUGARES).map(([k, [e, t]]) =>
         `<button type="button" class="chip ${k === v.lugar ? 'activo' : ''}" data-l="${k}">${e} ${t}</button>`).join('')}</div></label>
+      <div class="fila">${campo('Batería al llegar', 'desde', v.desde, { unidad: '%' })}${campo('Al acabar', 'hasta', v.hasta, { unidad: '%' })}</div>
+      <div class="fila">${campo('Energía', 'kwh', v.kwh, { unidad: 'kWh' })}${campo('Pagado', 'euros', v.euros, { unidad: '€' })}</div>
+      <p class="muy-suave" id="estimado" style="margin-top:-6px">Con los % te calculo la energía, y con tu tarifa lo pagado. Si el poste o el ticket dicen otra cosa, cámbialo.</p>
+      ${campo('Km del coche (cuentakilómetros)', 'km', v.km, { unidad: 'km', paso: '1', extra: ultimosKm() ? `placeholder="La última vez: ${ultimosKm()}"` : '' })}
       ${campo('Día', 'fecha', v.fecha, { tipo: 'date' })}
       ${campo('Sitio (opcional)', 'sitio', v.sitio, { tipo: 'text', extra: 'placeholder="Ej. Ionity La Jonquera"' })}
-      <div class="fila">${campo('Energía', 'kwh', v.kwh, { unidad: 'kWh' })}${campo('Pagado', 'euros', v.euros, { unidad: '€' })}</div>
-      <div class="fila">${campo('Batería al llegar', 'desde', v.desde, { unidad: '%' })}${campo('Al acabar', 'hasta', v.hasta, { unidad: '%' })}</div>
-      ${campo('Km del coche (cuentakilómetros)', 'km', v.km, { unidad: 'km', paso: '1' })}
       <p class="muy-suave">Con los km de dos cargas te calculo cuánto te cuesta cada 100 km.</p>
       <div class="botones">
         <button class="boton" type="submit">Guardar</button>
@@ -158,20 +170,32 @@ export function abrirFormCarga(c = {}) {
       lugar = b.dataset.l;
       caja.querySelectorAll('#lugares .chip').forEach((x) => x.classList.toggle('activo', x === b));
       if (lugar === 'gratis') caja.querySelector('[name=euros]').value = 0;
+      else { ponerKwh(); ponerEuros(); }
     };
-    // Si no sabe los kWh pero sí los %, se calculan solos.
+    // Si no sabe los kWh pero sí los %, se calculan solos; y lo pagado, con su tarifa (mientras no lo escriba ella).
     const f = caja.querySelector('form');
-    f.oninput = (e) => {
-      if (!['desde', 'hasta'].includes(e.target.name) || f.kwh.dataset.tocado) return;
-      const de = +f.desde.value, a = +f.hasta.value;
-      if (f.desde.value !== '' && f.hasta.value !== '' && a > de) f.kwh.value = ((a - de) / 100 * COCHE.util / (lugar === 'rapida' ? 0.95 : 0.9)).toFixed(1);
+    let kwhEstimado = !!c.kwhEstimado;
+    const ponerEuros = () => {
+      if (f.euros.dataset.tocado || (!nueva && v.euros !== '')) return;
+      if (lugar === 'gratis') { f.euros.value = 0; return; }
+      if (+f.kwh.value > 0) f.euros.value = (+f.kwh.value * precioDe(lugar)).toFixed(2);
     };
-    f.kwh.addEventListener('input', () => { f.kwh.dataset.tocado = '1'; });
+    const ponerKwh = () => {
+      if (f.kwh.dataset.tocado || (!nueva && v.kwh !== '' && !kwhEstimado)) return;
+      const de = +f.desde.value, a = +f.hasta.value;
+      if (f.desde.value !== '' && f.hasta.value !== '' && a > de) { f.kwh.value = ((a - de) / 100 * COCHE.util / (lugar === 'rapida' ? 0.95 : 0.9)).toFixed(1); kwhEstimado = true; }
+    };
+    f.oninput = (e) => {
+      if (['desde', 'hasta'].includes(e.target.name)) ponerKwh();
+      if (['desde', 'hasta', 'kwh'].includes(e.target.name)) ponerEuros();
+    };
+    f.kwh.addEventListener('input', () => { f.kwh.dataset.tocado = '1'; kwhEstimado = false; });
+    f.euros.addEventListener('input', () => { f.euros.dataset.tocado = '1'; });
     f.onsubmit = (e) => {
       e.preventDefault();
       const d = Object.fromEntries(new FormData(f));
       if (!d.kwh && !d.euros) { aviso('Pon al menos los kWh o lo que pagaste'); return; }
-      guardarCarga({ ...c, ...d, lugar, kwh: d.kwh === '' ? '' : +d.kwh, euros: d.euros === '' ? '' : +d.euros,
+      guardarCarga({ ...c, ...d, lugar, kwhEstimado, kwh: d.kwh === '' ? '' : +d.kwh, euros: d.euros === '' ? '' : +d.euros,
         desde: d.desde === '' ? '' : +d.desde, hasta: d.hasta === '' ? '' : +d.hasta, km: d.km === '' ? '' : +d.km });
       if (+d.km > (+ajustes().kmActuales || 0)) cambiarAjuste('kmActuales', +d.km);
       cerrarHoja(); aviso('Carga guardada');

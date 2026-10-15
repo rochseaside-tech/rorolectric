@@ -5,9 +5,21 @@ import { campo, aviso, esc, num, buscarSitio, ubicacion } from '../comun.js';
 // «Mis sitios»: los sitios habituales de quien usa este móvil. Salen como botones en Coche («¿Llego?»), Viaje y Mapa.
 const EMOJIS = ['🏠', '💼', '👪', '👴', '🏋️', '🛒', '🏫', '🏖️', '⛰️', '📍'];
 const SUGERIDOS = [['🏠', 'Casa'], ['💼', 'Trabajo'], ['👪', 'Familia']];
-function pintarSitios(el, editando = null) {
+function pintarSitios(el, editando = null, abierto = false) {
   const lista = lugares();
-  const e = editando || { emoji: '🏠', nombre: '', dir: '' };
+  const e = editando || { emoji: lista.length ? '📍' : '🏠', nombre: '', dir: '' };
+  // Con sitios ya guardados, el formulario se queda recogido tras un botón.
+  if (lista.length && !editando && !abierto) {
+    el.innerHTML = `<h2>Mis sitios</h2>
+      <ul class="lista">${lista.map((l) => `<li><span class="icono" style="font-size:20px">${esc(l.emoji || '📍')}</span>
+        <div class="cuerpo"><b>${esc(l.nombre)}</b><span>${esc(l.dir || '')}</span></div>
+        <div class="lado" style="display:flex;gap:6px"><button class="boton mini sec" type="button" data-editar="${esc(l.id)}">Cambiar</button><button class="boton mini sec" type="button" data-quitar="${esc(l.id)}" aria-label="Quitar">✕</button></div></li>`).join('')}</ul>
+      <button class="boton sec" type="button" id="s-nuevo" style="margin-top:12px">＋ Añadir otro sitio</button>
+      <p class="muy-suave" style="margin-top:8px">Salen como botones en «¿Llego?», en Viaje y en el Mapa. Solo en este móvil: cada persona pone los suyos.</p>`;
+    el.querySelector('#s-nuevo').onclick = () => pintarSitios(el, null, true);
+    botonesLista(el);
+    return;
+  }
   el.innerHTML = `<h2>Mis sitios</h2>
     <p class="suave">Tus sitios de siempre: casa, trabajo, la casa de tu familia… Salen como botones en «¿Llego?», en Viaje y en el Mapa. Se guardan solo en este móvil: cada persona pone los suyos en el suyo.</p>
     ${lista.length ? `<ul class="lista">${lista.map((l) => `<li><span class="icono" style="font-size:20px">${esc(l.emoji || '📍')}</span>
@@ -22,7 +34,7 @@ function pintarSitios(el, editando = null) {
       <div class="fila" style="gap:8px;flex-wrap:wrap">
         <button class="boton" type="button" id="s-guardar" style="flex:1">${editando ? 'Guardar cambios' : 'Guardar sitio'}</button>
         <button class="boton sec" type="button" id="s-aqui" style="flex:1">📍 Es donde estoy ahora</button>
-        ${editando ? '<button class="boton sec" type="button" id="s-cancelar">Cancelar</button>' : ''}
+        ${editando || abierto ? '<button class="boton sec" type="button" id="s-cancelar">Cancelar</button>' : ''}
       </div>
     </div>`;
   let emoji = e.emoji;
@@ -63,6 +75,10 @@ function pintarSitios(el, editando = null) {
     guardarCon({ punto: p, dir, municipio });
   };
   el.querySelector('#s-cancelar')?.addEventListener('click', () => pintarSitios(el));
+  botonesLista(el);
+}
+// «Cambiar» y «✕» de cada sitio guardado.
+function botonesLista(el) {
   el.querySelectorAll('[data-quitar]').forEach((b) => { b.onclick = () => {
     if (!b.dataset.seguro) { b.dataset.seguro = '1'; b.textContent = '¿Seguro?'; return; }
     borrarLugar(b.dataset.quitar); aviso('Sitio quitado'); pintarSitios(el);
@@ -102,64 +118,55 @@ export function pintar(raiz) {
       ${campo('Cargar en casa normalmente hasta', 'objetivoCasa', a.objetivoCasa, { unidad: '%' })}
     </section>
 
-    <section class="tarjeta">
-      <h2>Datos de tu coche</h2>
+    <details class="guia"><summary><span class="emoji">🚗</span>Datos de tu coche</summary><div class="dentro">
       <p class="suave">Vienen de fábrica. Cámbialos si los tuyos son otros: por ejemplo, si con los años la batería ha perdido capacidad. Vacío = el de fábrica.</p>
       <div class="rejilla">
         ${campo(`Batería útil (fábrica ${num(COCHE.fabrica.util, 1)})`, 'correccion.util', a.correccion.util ?? '', { unidad: 'kWh' })}
         ${campo(`Carga en casa máx. (fábrica ${COCHE.fabrica.acMax})`, 'correccion.acMax', a.correccion.acMax ?? '', { unidad: 'kW' })}
         ${campo(`Carga rápida máx. (fábrica ${COCHE.fabrica.dcMax})`, 'correccion.dcMax', a.correccion.dcMax ?? '', { unidad: 'kW' })}
       </div>
-    </section>
+    </div></details>
 
-    <section class="tarjeta">
-      <h2>Avisos</h2>
+    <details class="guia"><summary><span class="emoji">🔔</span>Avisos</summary><div class="dentro">
       <div class="chips" id="avisos">${[['cien', '💯 Cargar al 100 % (baterías LFP)'], ['neumaticos', '🛞 Presión de ruedas'], ['itv', '🧾 ITV'], ['revision', '🔧 Revisión'], ['seguro', '🛡️ Seguro']]
         .map(([k, t]) => `<button type="button" class="chip ${a.avisos[k] ? 'activo' : ''}" data-aviso="${k}">${t}</button>`).join('')}</div>
       <p class="muy-suave" style="margin-top:8px">Encendido = te lo recuerdo en la pantalla Coche.</p>
-    </section>
+    </div></details>
 
-    <section class="tarjeta">
-      <h2>Tu consumo real</h2>
+    <details class="guia"><summary><span class="emoji">📊</span>Tu consumo real</summary><div class="dentro">
       <p class="suave">El coche te lo enseña en kWh/100 km. Ponlo cuando lo sepas y la autonomía será la tuya, no una estimación. Vacío = estimación.</p>
       <div class="rejilla">${TIPOS_VIA.map(([k, t]) => campo(t, `consumoReal.${k}`, a.consumoReal[k] ?? '', { unidad: 'kWh', extra: `placeholder="${CONSUMO_TIPICO[k]}"` })).join('')}</div>
-    </section>
+    </div></details>
 
-    <section class="tarjeta">
-      <h2>Precios en la calle</h2>
+    <details class="guia"><summary><span class="emoji">💶</span>Precios en la calle</summary><div class="dentro">
       <p class="suave">Para calcular cuánto te costará. Pon lo que pagas normalmente.</p>
       <div class="fila">${campo('Rápida', 'precioRapida', a.precioRapida, { unidad: '€/kWh' })}${campo('Lenta', 'precioLenta', a.precioLenta, { unidad: '€/kWh' })}</div>
-    </section>
+    </div></details>
 
-    <section class="tarjeta">
-      <h2>Para comparar con gasolina</h2>
+    <details class="guia"><summary><span class="emoji">⛽</span>Para comparar con gasolina</summary><div class="dentro">
       <div class="fila">${campo('Gastaba', 'gasolinaL100', a.gasolinaL100, { unidad: 'L/100' })}${campo('Precio', 'gasolinaPrecio', a.gasolinaPrecio, { unidad: '€/L' })}</div>
-    </section>
+    </div></details>
 
-    <section class="tarjeta">
-      <h2>Fechas para avisarte</h2>
+    <details class="guia"><summary><span class="emoji">📅</span>Fechas para avisarte</summary><div class="dentro">
       ${campo('Matriculación', 'matriculacion', a.matriculacion, { tipo: 'date' })}
       <div class="fila">${campo('Próxima revisión', 'revisionFecha', a.revisionFecha, { tipo: 'date' })}${campo('o a los', 'revisionKm', a.revisionKm, { unidad: 'km', paso: '1' })}</div>
       ${campo('Km actuales', 'kmActuales', a.kmActuales, { unidad: 'km', paso: '1' })}
       ${campo('Renovación del seguro', 'seguroFecha', a.seguroFecha, { tipo: 'date' })}
       ${campo('Teléfono de asistencia en carretera', 'telAsistencia', a.telAsistencia, { tipo: 'tel', extra: 'placeholder="El de tu seguro o Changan"' })}
       ${a.telAsistencia ? `<a class="boton sec" href="tel:${esc(a.telAsistencia.replace(/\s/g, ''))}">📞 Llamar a asistencia</a>` : ''}
-    </section>
+    </div></details>
 
-    <section class="tarjeta">
-      <h2>Aspecto</h2>
+    <details class="guia"><summary><span class="emoji">🎨</span>Aspecto</summary><div class="dentro">
       <div class="segmento" style="margin:0"><button type="button" data-tema="oscuro" class="${a.tema !== 'claro' ? 'activo' : ''}">Oscuro</button><button type="button" data-tema="claro" class="${a.tema === 'claro' ? 'activo' : ''}">Claro</button></div>
-    </section>
+    </div></details>
     </form>
 
-    <section class="tarjeta">
-      <h2>Lista de cargadores</h2>
+    <details class="guia"><summary><span class="emoji">🗺️</span>Lista de cargadores</summary><div class="dentro">
       <p class="suave" id="lista-info">…</p>
       <p class="muy-suave">Se actualiza sola cada noche: registro oficial del Ministerio, OpenStreetMap y precios y reservas de REVE (Red Eléctrica). Fuera de España: registro oficial de Francia y OpenStreetMap en Portugal y Andorra. No tienes que hacer nada.</p>
-    </section>
+    </div></details>
 
-    <section class="tarjeta">
-      <h2>Instalar en el móvil</h2>
+    <details class="guia"><summary><span class="emoji">📲</span>Instalar en el móvil</summary><div class="dentro">
       ${esAndroid() ? `<button class="boton ${window.instalarApp ? '' : 'oculto'}" id="instalar" style="margin-bottom:12px">Instalar ROROLECTRIC</button>
       <ol class="suave" style="padding-left:20px;margin:0">
         <li>Abre esta página en <b>Chrome</b>.</li><li>Menú <b>⋮</b> (arriba a la derecha).</li><li><b>Instalar aplicación</b> o <b>Añadir a pantalla de inicio</b>.</li>
@@ -167,7 +174,7 @@ export function pintar(raiz) {
         <li>Abre esta página en <b>Safari</b>.</li><li>Botón <b>Compartir</b> (el cuadrado con la flecha).</li><li><b>Añadir a pantalla de inicio</b>.</li>
       </ol>
       <p class="muy-suave" style="margin-top:8px">¿Android? En Chrome: menú ⋮ → Instalar aplicación.</p>`}
-    </section>
+    </div></details>
 
     <button class="boton peligro" id="borrar" style="margin-bottom:20px">Borrar todos mis datos</button>`;
 

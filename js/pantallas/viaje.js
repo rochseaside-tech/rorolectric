@@ -46,6 +46,8 @@ export function pintar(raiz, [destino] = []) {
     const b = e.target.closest('[data-nombre]'); if (!b) return;
     f.querySelector(`[name=${fila.dataset.rellena}]`).value = b.dataset.nombre;
     fila.querySelectorAll('.chip').forEach((x) => x.classList.toggle('activo', x === b));
+    // Elegir destino ya es decir «vamos»: se planifica sin pulsar el botón.
+    if (fila.dataset.rellena === 'hasta') { leer(); planificar(raiz); }
   }; });
   f.querySelector('#criterio').onclick = (e) => {
     const b = e.target.closest('[data-c]'); if (!b) return;
@@ -59,6 +61,7 @@ export function pintar(raiz, [destino] = []) {
 async function planificar(raiz) {
   const res = raiz.querySelector('#res');
   res.innerHTML = '<div class="tarjeta suave">Buscando la ruta…</div>';
+  res.scrollIntoView({ behavior: 'smooth', block: 'start' });
   try {
     // Un sitio guardado se usa tal cual (sin buscarlo en el mapa).
     const sitio = async (t) => { const l = lugarPorNombre(t); return l ? { punto: l.punto, nombre: `${l.emoji || ''} ${l.nombre}`.trim() } : buscarSitio(t); };

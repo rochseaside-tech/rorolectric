@@ -11,12 +11,46 @@
   "background_color": "#121418",
   "theme_color": "#121418",
   "icons": [
-    { "src": "./icons/icono-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "./icons/icono-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "./icons/icono-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "./icons/icono-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icono-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icono-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ],
   "shortcuts": [
-    { "name": "Cargadores cerca", "url": "./#/mapa" },
-    { "name": "Cargar en casa", "url": "./#/cargar" }
+    {
+      "name": "Estoy en un cargador",
+      "short_name": "En un cargador",
+      "description": "Cómo se paga en el cargador que tienes al lado",
+      "url": "./#/mapa/aqui"
+    },
+    {
+      "name": "Cargadores cerca",
+      "short_name": "Mapa",
+      "url": "./#/mapa"
+    },
+    {
+      "name": "Planificar un viaje",
+      "short_name": "Viaje",
+      "url": "./#/viaje"
+    },
+    {
+      "name": "Apuntar una carga",
+      "short_name": "Apuntar carga",
+      "url": "./#/diario/nueva"
+    }
   ]
 }

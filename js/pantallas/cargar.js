@@ -237,7 +237,7 @@ function calle(el) {
   el.innerHTML = `
     <section class="tarjeta">
       <label class="campo"><span>Potencia del cargador (lo pone en el poste)</span>
-        <div class="chips" id="kws">${[...new Set([22, 50, 100, 150, 300, kw])].sort((x, y) => x - y).map((k) => `<button class="chip ${k === kwCalle ? 'activo' : ''}" data-kw="${k}">${k} kW</button>`).join('')}</div></label>
+        <div class="chips" id="kws">${[...new Set([22, 50, 100, 150, 300, kwCalle])].sort((x, y) => x - y).map((k) => `<button class="chip ${k === kwCalle ? 'activo' : ''}" data-kw="${k}">${k} kW</button>`).join('')}</div></label>
       <div class="fila">
         ${campo('Ahora tiene', 'de', bateria().pct, { unidad: '%' })}
         ${campo('Cargar hasta', 'a', 80, { unidad: '%' })}
