@@ -11,7 +11,7 @@ import { abrirFormCarga } from './pantallas/diario.js';
 import { cargarAqui } from './pantallas/cargar.js';
 
 const ENCHUFES = { C: 'CCS', T: 'Tipo 2', H: 'CHAdeMO', S: 'Schuko', X: 'Tesla', J: 'Tipo 1', I: 'Industrial' };
-const TARJETA = 1, APP = 2, RFID = 4, GRATIS = 8, SIN_REGISTRO = 16, CLIENTES = 32;
+const TARJETA = 1, APP = 2, RFID = 4, GRATIS = 8, SIN_REGISTRO = 16, CLIENTES = 32, RESERVABLE = 64;
 const CELDA = 0.25;
 export const SERVICIOS = { r: '☕ Cafetería o restaurante', s: '🛒 Tienda o súper', g: '⛽ Gasolinera', h: '🏨 Hotel', p: '🅿️ Parking cubierto' };
 
@@ -36,14 +36,15 @@ export function cargarTodos() {
 }
 export const fechaLista = () => fechaDatos;
 
-function deFila([lat, lon, nombre, operador, potencia, enchufesTxt, pago, horario, dir, puntos, fuente, servicios = '', reve = '', precio = 0], i) {
+function deFila([lat, lon, nombre, operador, potencia, enchufesTxt, pago, horario, dir, puntos, fuente, servicios = '', reve = '', precio = 0, tarifa = ''], i) {
   const enchufes = enchufesTxt ? enchufesTxt.split(',').map((x) => {
     const [, t, n, kw] = x.match(/^(\w)(\d+)(?::(\d+))?$/) || [];
     return { tipo: t, nombre: ENCHUFES[t] || t, n: +n || null, kw: +kw || 0 };
   }) : [];
   const ccs = enchufes.some((e) => e.tipo === 'C');
   return {
-    id: `c${i}`, lat, lon, nombre, operador, potencia, enchufes, ccs, dir, horario, puntos, fuente, servicios, reve, precio: precio || null,
+    id: `c${i}`, lat, lon, nombre, operador, potencia, enchufes, ccs, dir, horario, puntos, fuente, servicios, reve, precio: precio || null, tarifa,
+    reservable: !!(pago & RESERVABLE),
     tarjeta: !!(pago & TARJETA), h24: horario === '24h',
     rapido: ccs && (potencia >= 50 || !potencia),
     compatible: !enchufes.length || enchufes.some((e) => 'CTS'.includes(e.tipo)),
@@ -53,8 +54,40 @@ function deFila([lat, lon, nombre, operador, potencia, enchufesTxt, pago, horari
   };
 }
 
+/* ---------- Países vecinos (Francia, Portugal, Andorra) ---------- */
+// Vienen en teselas de 2° (datos/fuera/LAT_LON.json, scripts/fuera.mjs): solo se baja la de la zona que se mira.
+let indiceFuera = null;
+const teselas = new Map();
+async function cargarFuera(zonas) {
+  indiceFuera ||= fetch('datos/fuera/indice.json').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const ind = await indiceFuera;
+  if (!ind) { indiceFuera = null; return; }
+  const T = ind.tamTesela || 2, tareas = [];
+  for (const [s, w, n, e] of zonas) {
+    for (let la = Math.floor(s / T) * T; la <= n; la += T) {
+      for (let lo = Math.floor(w / T) * T; lo <= e; lo += T) {
+        const k = `${la}_${lo}`;
+        if (!ind.teselas[k]) continue;
+        if (!teselas.has(k)) {
+          teselas.set(k, fetch(`datos/fuera/${k}.json`).then((r) => r.json()).then((d) => {
+            d.d.forEach((f, i) => {
+              const c = { ...deFila(f, 0), id: `f${k}-${i}` };
+              todos.push(c);
+              const kc = `${Math.floor(c.lat / CELDA)},${Math.floor(c.lon / CELDA)}`;
+              (rejilla.get(kc) || rejilla.set(kc, []).get(kc)).push(c);
+            });
+          }).catch(() => teselas.delete(k)));
+        }
+        tareas.push(teselas.get(k));
+      }
+    }
+  }
+  await Promise.all(tareas);
+}
+
 export async function enZona(s, w, n, e) {
   await cargarTodos();
+  if ((n - s) * (e - w) <= 40) await cargarFuera([[s, w, n, e]]); // con el mapa muy alejado, no
   const lista = [];
   for (let y = Math.floor(s / CELDA); y <= Math.floor(n / CELDA); y++) {
     for (let x = Math.floor(w / CELDA); x <= Math.floor(e / CELDA); x++) {
@@ -68,6 +101,8 @@ export async function enZona(s, w, n, e) {
 // Rápidos (CCS) cerca de cada punto: para las paradas de un viaje.
 export async function rapidosCercaDe(puntos, radioKm = 10) {
   await cargarTodos();
+  const g0 = radioKm / 111 + CELDA;
+  await cargarFuera(puntos.map((p) => [p[0] - g0, p[1] - g0 * 1.4, p[0] + g0, p[1] + g0 * 1.4]));
   const encontrados = puntos.map((p) => {
     const g = radioKm / 111 + CELDA;
     return enZonaSync(p[0] - g, p[1] - g * 1.4, p[0] + g, p[1] + g * 1.4)
@@ -165,6 +200,13 @@ export const enlaceReve = (c) => (c.reve ? `https://www.mapareve.es/mapa-puntos-
 function bloquePrecio(c) {
   const p = c.precio;
   const libre = c.reve ? `<a class="boton mini sec" style="margin-top:8px" href="${enlaceReve(c)}" target="_blank" rel="noopener">🟢 ¿Está libre ahora? Míralo en REVE</a>` : '';
+  if (!p && c.tarifa) {
+    // Francia: lo que la empresa pone en el registro oficial, tal cual (a veces es un enlace a su web).
+    const t = /^https?:\/\/\S+$/.test(c.tarifa) ? `<a href="${esc(c.tarifa)}" target="_blank" rel="noopener">ver tarifas en su web</a>` : esc(c.tarifa);
+    return `<div style="margin-top:8px;padding:10px;border-radius:10px;background:var(--tarjeta2);font-size:13px;line-height:1.5">
+      <b style="display:block;margin-bottom:2px">Precio aquí</b>🧾 ${t}
+      <div class="muy-suave" style="margin-top:4px">Lo que publica la empresa en el registro oficial de Francia (puede estar en francés).</div></div>`;
+  }
   if (!p) {
     if (!c.reve) return '';
     const bajando = infoReve && !infoReve.tarifasCompletas;
@@ -190,7 +232,7 @@ export const clasePin = (c) => (!c.compatible ? 'no' : c.rapido ? 'rapido' : c.p
 export function htmlPopup(c) {
   const como = `https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lon}`;
   const otro = esIphone() ? ['Apple Maps', `https://maps.apple.com/?daddr=${c.lat},${c.lon}`] : ['Waze', `https://waze.com/ul?ll=${c.lat},${c.lon}&navigate=yes`];
-  const fuente = [...(c.fuente || '')].map((x) => ({ m: 'Registro oficial', o: 'OpenStreetMap', r: 'REVE (Red Eléctrica)' }[x])).filter(Boolean).join(' + ');
+  const fuente = [...(c.fuente || '')].map((x) => ({ m: 'Registro oficial', o: 'OpenStreetMap', r: 'REVE (Red Eléctrica)', f: 'Registro oficial de Francia (IRVE)' }[x])).filter(Boolean).join(' + ');
   return `<h3>${esc(c.nombre)}</h3>
     ${c.operador ? `<div class="suave">${esc(c.operador)}</div>` : ''}
     ${c.dir ? `<div class="muy-suave">${esc(c.dir)}</div>` : ''}
@@ -199,7 +241,7 @@ export function htmlPopup(c) {
     ${!c.compatible ? '<div style="color:var(--rojo);font-weight:700">No vale para tu coche (no tiene CCS ni Tipo 2)</div>' : ''}
     ${c.soloSchuko ? '<div style="color:var(--ambar);font-weight:600">Solo enchufe normal: necesitas el cargador portátil del coche</div>' : ''}
     <div class="chips">${c.enchufes.map((e) => `<span class="chip">${e.n ? `${e.n}× ` : ''}${e.nombre}${e.kw ? ` · ${num(e.kw)} kW` : ''}</span>`).join('') || '<span class="chip">Enchufes sin datos</span>'}
-      ${c.gratis ? '<span class="chip activo">Gratis</span>' : ''}${c.pago.map((p) => `<span class="chip">${p}</span>`).join('')}</div>
+      ${c.gratis ? '<span class="chip activo">Gratis</span>' : ''}${c.reservable ? '<span class="chip activo">📅 Se puede reservar</span>' : ''}${c.pago.map((p) => `<span class="chip">${p}</span>`).join('')}</div>
     ${c.horario ? `<div class="suave">🕒 ${esc(c.horario === '24h' ? 'Abierto 24 h' : c.horario)}</div>` : ''}
     ${c.clientes ? '<div class="suave">Solo para clientes del sitio</div>' : ''}
     ${c.servicios ? `<div class="suave">${[...c.servicios].map((s) => SERVICIOS[s]).filter(Boolean).join(' · ')}</div>` : ''}
@@ -226,7 +268,8 @@ function bloquePago(c) {
   const op = operadorDe(c.operador, c.nombre);
   const filas = [];
   if (op?.id === 'tesla' && COCHE.supercargador) filas.push('🚗 <b>Con tu Tesla: enchufar y listo</b>, se cobra solo en tu cuenta de Tesla');
-  if (c.gratis) filas.push('🎁 <b>Gratis</b> según OpenStreetMap');
+  if (c.gratis) filas.push(`🎁 <b>Gratis</b> según ${c.fuente === 'f' ? 'el registro oficial de Francia' : 'OpenStreetMap'}`);
+  if (c.pago.includes('Sin registro') && c.fuente === 'f') filas.push('🙋 Se puede cargar sin abono ni registro');
   if (c.pago.includes('Tarjeta')) filas.push('💳 <b>Acepta tarjeta</b> en el poste');
   else if (c.rapido) filas.push('💳 Si el poste tiene lector o código QR, paga con tarjeta sin app');
   if (op) filas.push(`📱 App de ${esc(op.nombre)}: <a href="${enlaceApp(op.app)}">${esc(op.app)}</a>${op.nota ? `<br><span class="muy-suave">${esc(op.nota)}</span>` : ''}`);

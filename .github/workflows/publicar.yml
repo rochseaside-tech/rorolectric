@@ -38,6 +38,8 @@ jobs:
           restore-keys: reve-
       - name: Juntar todos los cargadores
         run: REVE_DIR="$HOME/reve-datos" node scripts/cargadores.mjs || echo "::warning::No se pudo rehacer la lista hoy; se publica la anterior"
+      - name: Cargadores de Francia, Portugal y Andorra
+        run: node scripts/fuera.mjs || node scripts/fuera.mjs --copiar-publicado || echo "::warning::Hoy no hay cargadores de fuera de España"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
