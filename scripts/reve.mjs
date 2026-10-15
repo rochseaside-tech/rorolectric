@@ -20,6 +20,7 @@ const leer = async (f, def) => { try { return JSON.parse(await readFile(join(DIR
 const cursor = () => ({ pag: 1, total: null, inicio: null, ultimoInicio: null, hecha: null, n: 0 });
 const estado = await leer('estado.json', { loc: cursor(), tar: cursor() });
 estado.est ||= cursor();
+estado.cam ||= cursor(); // «cambios»: averías y arreglos desde la última hora
 const sitios = await leer('sitios.json', {});
 const precios = await leer('precios.json', {});
 const fuera = await leer('fuera.json', {}); // puntos (EVSE) fuera de servicio: { id: desde cuándo }
@@ -31,13 +32,15 @@ if ((estado.version || 1) < 2) {
 
 // Qué toca pedir ahora. Orden: sitios → si funcionan → precios. Después, cada hora lo primero son las
 // averías y arreglos desde la última vez (para que «no funciona» esté al día), luego tarifas cambiadas y sitios.
-const PAGINAS = { loc: '/locations', tar: '/connectors/tariffs', est: '/evses/operational_status' };
+// Orden: sitios → precios → todas las averías. Pero desde que están los sitios, lo PRIMERO de cada hora son
+// las averías y arreglos de la última hora («cam»), para que «no funciona» esté al día desde el principio.
+const PAGINAS = { loc: '/locations', tar: '/connectors/tariffs', est: '/evses/operational_status', cam: '/evses/operational_status' };
 function tarea(ahora) {
-  const { loc, tar, est } = estado;
+  const { loc, tar, est, cam } = estado;
   if (!loc.hecha) return 'loc';
-  if (est.hecha && est.pag === 1 && ahora - Date.parse(est.ultimoInicio) >= 50 * 60e3) return 'est'; // cambios de la última hora
-  if (!est.hecha || est.pag > 1) return 'est';
+  if (cam.pag > 1 || !cam.ultimoInicio || ahora - Date.parse(cam.ultimoInicio) >= 50 * 60e3) return 'cam';
   if (!tar.hecha || tar.pag > 1) return 'tar';
+  if (!est.hecha || est.pag > 1) return 'est';
   if (ahora - Date.parse(tar.ultimoInicio) >= 20 * HORA) return 'tar'; // tarifas cambiadas desde ayer
   if (loc.pag > 1 || ahora - Date.parse(loc.ultimoInicio) >= 6 * 24 * HORA) return 'loc';
   return null;
@@ -115,12 +118,13 @@ async function unaHora() {
     const empieza = c.pag === 1, cuando = new Date().toISOString();
     const params = { page: c.pag, limit: 100 };
     // Tarifas y estado: tras la primera pasada completa, solo lo que ha cambiado (con 1 h de margen).
-    if (t !== 'loc' && c.hecha) params.date_from = new Date(Date.parse(c.ultimoInicio) - HORA).toISOString();
+    if (t === 'cam') params.date_from = new Date((c.ultimoInicio ? Date.parse(c.ultimoInicio) : Date.now()) - HORA).toISOString();
+    else if (t !== 'loc' && t !== 'est' && c.hecha) params.date_from = new Date(Date.parse(c.ultimoInicio) - HORA).toISOString();
     let res;
     try { res = await pedir(PAGINAS[t], params); } catch (e) { console.warn(e.message); break; }
     if (res.limite) { limite = true; console.log('REVE dice que ya van 5 consultas esta hora: se sigue en la próxima'); break; }
     hechas++;
-    if (t === 'est') huboEst = true;
+    if (t === 'est' || t === 'cam') huboEst = true;
     if (empieza) { c.inicio = cuando; c.n = (c.n || 0) + 1; }
     if (t === 'loc') for (const l of res.filas) guardarSitio(l, c.n);
     else if (t === 'tar') for (const x of res.filas) { const p = resumir(x.tariffs || [], hoy); if (p) precios[x.connector_id] = p; else delete precios[x.connector_id]; }
@@ -131,7 +135,7 @@ async function unaHora() {
       }
     }
     c.total = res.total;
-    console.log(`${{ loc: 'Sitios', tar: 'Tarifas', est: 'Si funcionan' }[t]}: página ${c.pag} de ${c.total}${params.date_from ? ' (solo cambios)' : ''}`);
+    console.log(`${{ loc: 'Sitios', tar: 'Tarifas', est: 'Si funcionan', cam: 'Averías y arreglos nuevos' }[t]}: página ${c.pag} de ${c.total}${params.date_from ? ' (solo cambios)' : ''}`);
     if (c.pag >= c.total || !res.filas.length) {
       c.hecha = new Date().toISOString(); c.ultimoInicio = c.inicio; c.pag = 1;
       if (t === 'loc') {
@@ -139,7 +143,7 @@ async function unaHora() {
         for (const [id, s] of Object.entries(sitios)) if (s.v < c.n - 1) delete sitios[id];
       }
       terminada = t;
-      console.log(`Pasada de ${{ loc: 'sitios', tar: 'tarifas', est: 'estado' }[t]} terminada`);
+      console.log(`Pasada de ${{ loc: 'sitios', tar: 'tarifas', est: 'estado', cam: 'cambios de la última hora' }[t]} terminada`);
     } else c.pag++;
   }
   // Esta hora ya está gastada (por nosotros o por otra ejecución): la próxima espera a la siguiente.
