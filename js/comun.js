@@ -21,14 +21,77 @@ export function aviso(texto) {
   temporizador = setTimeout(() => { el.hidden = true; }, 2600);
 }
 
+// Hojas que suben desde abajo (fichas, filtros, formularios). Se cierran con la ✕, tocando fuera,
+// arrastrando hacia abajo (desde arriba del todo), con Escape o con el botón «atrás» de Android.
+let turnoHoja = 0, hashAlAbrir = null;
 export function abrirHoja(html, alMontar) {
   const hoja = document.getElementById('hoja');
-  hoja.innerHTML = `<div class="hoja-caja">${html}</div>`;
+  const yaAbierta = !hoja.hidden && !hoja.classList.contains('saliendo');
+  turnoHoja++;
+  hoja.classList.remove('saliendo');
+  hoja.style.background = '';
+  hoja.innerHTML = `<div class="hoja-caja"><div class="hoja-cabeza"><span class="hoja-asa"></span>
+    <button type="button" class="hoja-x" data-cerrar aria-label="Cerrar">✕</button></div>${html}</div>`;
   hoja.hidden = false;
   hoja.onclick = (e) => { if (e.target === hoja || e.target.closest('[data-cerrar]')) cerrarHoja(); };
-  alMontar?.(hoja.firstElementChild);
+  const caja = hoja.firstElementChild;
+  arrastrarParaCerrar(hoja, caja);
+  // «Atrás» en Android: una entrada en el historial que, al quitarla, cierra la hoja
+  if (!yaAbierta && !history.state?.hoja) { hashAlAbrir = location.hash; history.pushState({ hoja: true }, ''); }
+  alMontar?.(caja);
 }
-export function cerrarHoja() { const h = document.getElementById('hoja'); h.hidden = true; h.innerHTML = ''; }
+
+export function cerrarHoja({ sinAnimar = false } = {}) {
+  const hoja = document.getElementById('hoja');
+  if (hoja.hidden) return;
+  const turno = turnoHoja, caja = hoja.firstElementChild;
+  const quitar = () => { if (turno !== turnoHoja) return; hoja.hidden = true; hoja.innerHTML = ''; hoja.classList.remove('saliendo'); hoja.style.background = ''; };
+  if (sinAnimar || !caja || matchMedia('(prefers-reduced-motion: reduce)').matches) quitar();
+  else {
+    hoja.classList.add('saliendo');
+    caja.style.transition = 'transform .2s ease-in';
+    caja.style.transform = 'translateY(100%)';
+    setTimeout(quitar, 200);
+  }
+  // Quitar la entrada del historial que puso abrirHoja (si nadie ha navegado entretanto)
+  // (si se ha abierto otra hoja justo después, se queda con esa entrada)
+  setTimeout(() => { if (turno === turnoHoja && history.state?.hoja && location.hash === hashAlAbrir) history.back(); }, 0);
+}
+window.addEventListener('popstate', () => { if (!document.getElementById('hoja').hidden) cerrarHoja(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cerrarHoja(); });
+
+// Arrastrar la hoja hacia abajo para cerrarla. Solo desde arriba del todo (o desde el asa), para no
+// pelearse con el scroll de dentro. Poco → vuelve a su sitio; mucho o rápido → se cierra.
+function arrastrarParaCerrar(hoja, caja) {
+  let inicioY = null, dy = 0, t0 = 0, arrastrando = false, desdeCabeza = false;
+  caja.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    inicioY = e.touches[0].clientY; t0 = Date.now(); dy = 0; arrastrando = false;
+    desdeCabeza = !!e.target.closest('.hoja-cabeza');
+  }, { passive: true });
+  caja.addEventListener('touchmove', (e) => {
+    if (inicioY == null) return;
+    const d = e.touches[0].clientY - inicioY;
+    if (!arrastrando) {
+      if (d > 8 && (caja.scrollTop <= 0 || desdeCabeza)) { arrastrando = true; caja.style.transition = 'none'; }
+      else if (Math.abs(d) > 8) { inicioY = null; return; }
+      else return;
+    }
+    dy = Math.max(0, d);
+    caja.style.transform = `translateY(${dy}px)`;
+    hoja.style.background = `rgba(0,0,0,${(0.5 * (1 - dy / caja.offsetHeight)).toFixed(3)})`;
+    e.preventDefault();
+  }, { passive: false });
+  const soltar = () => {
+    if (!arrastrando) { inicioY = null; return; }
+    const rapido = dy / Math.max(1, Date.now() - t0) > 0.6;
+    arrastrando = false; inicioY = null;
+    if (dy > Math.min(140, caja.offsetHeight / 3) || (rapido && dy > 40)) cerrarHoja();
+    else { caja.style.transition = 'transform .2s ease-out'; caja.style.transform = ''; hoja.style.background = ''; }
+  };
+  caja.addEventListener('touchend', soltar);
+  caja.addEventListener('touchcancel', soltar);
+}
 
 // Memoria corta para no pedir lo mismo a cada rato.
 function deCache(clave, maxMin) {

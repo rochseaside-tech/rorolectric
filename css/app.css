@@ -239,7 +239,17 @@ table.ficha td:last-child { text-align: right; color: var(--texto); font-weight:
 /* Hoja inferior y aviso */
 .hoja { position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.5); display: flex; align-items: flex-end; }
 .hoja[hidden] { display: none; }
-.hoja-caja { background: var(--fondo); width: 100%; max-width: 640px; margin: 0 auto; border-radius: 24px 24px 0 0; padding: 20px 16px calc(env(safe-area-inset-bottom) + 20px); max-height: 92dvh; overflow: auto; }
+.hoja-caja { background: var(--fondo); width: 100%; max-width: 640px; margin: 0 auto; border-radius: 24px 24px 0 0; padding: 0 16px calc(env(safe-area-inset-bottom) + 20px); max-height: 92dvh; overflow: auto; overscroll-behavior: contain; animation: hoja-sube .26s cubic-bezier(.2, .8, .2, 1); }
+.hoja:not([hidden]) { animation: hoja-velo .2s ease-out; transition: background .2s; }
+.hoja.saliendo { background: rgba(0,0,0,0) !important; }
+/* Cabecera fija: el asa (se puede arrastrar) y la ✕, que se ven aunque bajes por la ficha */
+.hoja-cabeza { position: sticky; top: 0; z-index: 5; margin: 0 -16px 6px; padding: 10px 16px 8px; background: var(--fondo); border-radius: 24px 24px 0 0; display: flex; justify-content: center; touch-action: none; cursor: grab; }
+.hoja-asa { width: 40px; height: 5px; border-radius: 3px; background: var(--texto3); opacity: .45; margin-top: 2px; }
+.hoja-x { position: absolute; right: 10px; top: 6px; width: 34px; height: 34px; border-radius: 50%; border: 0; background: var(--tarjeta2); color: var(--texto2); font-size: 16px; line-height: 1; display: grid; place-items: center; cursor: pointer; }
+.hoja-x:active { transform: scale(.92); }
+@keyframes hoja-sube { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes hoja-velo { from { background: rgba(0,0,0,0); } }
+@media (prefers-reduced-motion: reduce) { .hoja-caja, .hoja:not([hidden]) { animation: none; } }
 .hoja-caja h2 { margin-bottom: 14px; }
 .aviso { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 92px); z-index: 2100; background: var(--texto); color: var(--fondo); padding: 12px 16px; border-radius: 14px; font-weight: 600; text-align: center; box-shadow: var(--sombra); max-width: 600px; margin: 0 auto; }
 .aviso[hidden] { display: none; }

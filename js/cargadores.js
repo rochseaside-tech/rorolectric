@@ -450,7 +450,7 @@ function bloqueMio(c) {
 
 // Ficha de un cargador: hoja que sube desde abajo (cabe todo y se puede desplazar).
 export function abrirFicha(c) {
-  abrirHoja(`<div class="ficha">${htmlPopup(c)}</div><div class="botones"><button class="boton sec" data-cerrar>Cerrar</button></div>`, (caja) => {
+  abrirHoja(`<div class="ficha">${htmlPopup(c)}</div>`, (caja) => {
     caja.addEventListener('click', (e) => { const b = e.target.closest('[data-accion]'); if (b) accionFicha(b, c); });
     montarCoste(caja, c);
     montarAhora(caja, c);
