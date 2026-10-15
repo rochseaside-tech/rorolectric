@@ -1,5 +1,5 @@
 // Gastos: cada carga apuntada, resumen por mes y comparación con la gasolina.
-import { COCHE, ajustes, cambiarAjuste, cargas, guardarCarga, borrarCarga, hoyISO, exportar, importar } from '../datos.js';
+import { COCHE, ajustes, cambiarAjuste, cargas, guardarCarga, borrarCarga, hoyISO, exportar, importar, marcarHecho } from '../datos.js';
 import { resumen, co2Ahorrado } from '../calc.js';
 import { esc, num, euros, fechaBonita, abrirHoja, cerrarHoja, aviso, campo } from '../comun.js';
 
@@ -96,6 +96,7 @@ async function compartirArchivo(texto, nombre, tipo) {
 }
 
 async function guardarCopia() {
+  marcarHecho('copia');
   const nombre = `rorolectric-copia-${hoyISO()}.json`;
   const archivo = new File([exportar()], nombre, { type: 'application/json' });
   try {
@@ -150,10 +151,11 @@ export function abrirFormCarga(c = {}) {
         desde: d.desde === '' ? '' : +d.desde, hasta: d.hasta === '' ? '' : +d.hasta, km: d.km === '' ? '' : +d.km });
       if (+d.km > (+ajustes().kmActuales || 0)) cambiarAjuste('kmActuales', +d.km);
       cerrarHoja(); aviso('Carga guardada');
-      if (raizActual?.isConnected) pintar(raizActual); else location.hash = '#/diario';
+      // Solo se repinta si estás en Gastos; desde el mapa o «Cargando ahora» te quedas donde estabas.
+      if (location.hash.startsWith('#/diario')) pintar(raizActual);
     };
     caja.querySelector('#borrar')?.addEventListener('click', () => {
-      borrarCarga(c.id); cerrarHoja(); aviso('Carga borrada'); pintar(raizActual);
+      borrarCarga(c.id); cerrarHoja(); aviso('Carga borrada'); if (location.hash.startsWith('#/diario')) pintar(raizActual);
     });
   });
 }

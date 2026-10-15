@@ -75,7 +75,7 @@ export function pintar(raiz) {
   pintarMes(raiz);
   temp = tempManual();
   raiz.querySelector('#tiempo').onclick = () => editarTemp(raiz);
-  temperatura().then((t) => { tempReal = t; if (tempManual() == null) temp = t; if (raiz.isConnected) actualizar(raiz); });
+  temperatura().then((t) => { tempReal = t; if (tempManual() == null) temp = t; if (raiz.querySelector('#desliza')) actualizar(raiz); }); // si ya se fue de esta pantalla, nada
 }
 
 function actualizar(raiz) {
@@ -197,6 +197,9 @@ function pintarRecordatorios(raiz) {
     const d = dias(a.seguroFecha);
     if (d <= 30 && d >= -5) lista.push({ icono: '🛡️', titulo: `El seguro se renueva en ${d} días`, texto: 'Buen momento para pedir otros precios.' });
   }
+  // Los datos solo viven en este móvil: copia cada mes si hay algo que perder.
+  if (cargas().length >= 3 && (!h.copia || dias(h.copia) <= -30)) lista.push({ icono: '💾', titulo: 'Guarda una copia de tus datos',
+    texto: 'Tus cargas y notas solo están en este móvil. Si lo pierdes o lo cambias, con la copia lo recuperas todo.', enlace: '#/diario', urgente: !h.copia && cargas().length >= 10 });
   if (!a.matriculacion) lista.push({ icono: '✍️', titulo: 'Completa tus datos', texto: 'Fecha de matriculación, revisión y seguro: así te aviso a tiempo.', enlace: '#/ajustes' });
 
   const el = raiz.querySelector('#recordatorios');

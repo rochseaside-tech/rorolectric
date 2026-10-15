@@ -1,6 +1,6 @@
 // Viaje: ruta y paradas en cargadores rápidos REALES de la ruta (como ABRP, pero con la lista oficial).
 import { COCHE, TIPOS_VIA, ajustes, bateria, claveCargador, medido } from '../datos.js';
-import { consumo, planViaje, planConCargadores, muestrearRuta, cargadoresEnRuta } from '../calc.js';
+import { consumo, planViaje, planConCargadores, muestrearRuta, cargadoresEnRuta, perfilEnergia } from '../calc.js';
 import { enZona, cargarTodos, abrirFicha } from '../cargadores.js';
 import { esc, num, euros, duracion, ubicacion, temperatura, campo, aviso, capaMapa, buscarSitio } from '../comun.js';
 
@@ -53,6 +53,21 @@ async function planificar(raiz) {
   }
 }
 
+// Alturas de la ruta (Open-Meteo, gratis): hasta 100 puntos por petición, un punto cada ~1-3 km.
+async function desnivelDe(ruta, km) {
+  const muestras = muestrearRuta(ruta, Math.max(1, km / 300));
+  const alturas = [];
+  for (let i = 0; i < muestras.length; i += 100) {
+    const trozo = muestras.slice(i, i + 100);
+    const r = await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${trozo.map((m) => m.p[0].toFixed(4)).join(',')}&longitude=${trozo.map((m) => m.p[1].toFixed(4)).join(',')}`);
+    if (!r.ok) throw new Error('sin alturas');
+    alturas.push(...(await r.json()).elevation);
+  }
+  // Media de 5 puntos: los datos de altura tienen «ruido» (puentes, túneles, laderas) que inflaría los metros de subida.
+  const suaves = alturas.map((_, i) => { const t = alturas.slice(Math.max(0, i - 2), i + 3).filter((x) => x != null); return t.reduce((s, x) => s + x, 0) / t.length; });
+  return perfilEnergia(muestras, suaves, COCHE.peso || 2000);
+}
+
 // Cargadores rápidos (CCS, para todo el mundo) a menos de 3 km de la ruta.
 async function rapidosDeLaRuta(ruta) {
   await cargarTodos();
@@ -76,7 +91,9 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
   if (ruta) { try { enRuta = await rapidosDeLaRuta(ruta); } catch { /* sin lista: plan teórico */ } }
   const opciones = { llegarCon: +form.llegar || 10, paradaEn: Math.max(3, +form.parada || 12), cargarHasta: Math.min(100, Math.max(30, +form.cargarHasta || 80)) };
   const validos = enRuta.filter((x) => (x.potencia || 50) >= +form.minKw);
-  const plan = ruta && validos.length ? planConCargadores(km, +form.pct, c, validos, opciones) : planViaje(km, +form.pct, c, opciones);
+  let desnivel = null;
+  if (ruta) { try { desnivel = await desnivelDe(ruta, km); opciones.perfil = desnivel.perfil; } catch { /* sin alturas: como si fuera llano */ } }
+  const plan = ruta ? planConCargadores(km, +form.pct, c, validos, opciones) : planViaje(km, +form.pct, c, opciones);
   const n = plan.paradas.length;
   // OSRM calcula a velocidad legal; a 110 se tarda un poco más.
   const conduccion = horas ? horas * (form.via === 'autovia110' ? 1.06 : 1) : km / (form.via.startsWith('autovia') ? 100 : 60);
@@ -86,6 +103,7 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
       <div class="grande">${plan.imposible ? 'Así no llegas' : n ? `${n} parada${n > 1 ? 's' : ''} · ${duracion(plan.minutosCarga)} cargando` : 'Sin parar a cargar'}</div>
       <p>${num(km)} km${origen ? ` desde ${esc(origen.nombre)} hasta ${esc(destino.nombre)}` : ''}. Conduciendo ${duracion(conduccion * 60)}${n ? `; en total unas ${duracion(conduccion * 60 + plan.minutosCarga + n * 5)}` : ''}.
       ${plan.llegada != null ? `Llegas con un <b>${Math.round(plan.llegada)} %</b>.` : ''}</p>
+      ${desnivel && desnivel.sube > 50 ? `<p>⛰️ Subes ${num(desnivel.sube)} m y bajas ${num(desnivel.baja)} m en total: ${desnivel.total >= 0 ? 'gasta' : 'recupera'} unos <b>${num(Math.abs(desnivel.total), 1)} kWh</b> (≈ ${num(Math.abs(desnivel.total) / COCHE.util * 100)} % de batería). Ya está contado tramo a tramo.</p>` : ''}
       ${costeViaje(km, plan)}
       <p class="muy-suave">Consumo usado: ${num(c, 1)} kWh/100 km${temp != null ? ` con ${num(temp)} °C` : ''}. ${ruta ? `${enRuta.length} cargadores rápidos a menos de 3 km de la ruta.` : ''} Paradas con al menos un ${opciones.paradaEn} %, cargando hasta el ${opciones.cargarHasta} % o lo justo para llegar, en cargadores de ${form.minKw} kW o más (cámbialo en «Más opciones»).</p>
     </div>

@@ -222,17 +222,43 @@ export function cargadoresEnRuta(muestras, cargadores, maxDesvio = 3) {
   return res.sort((a, b) => a.kmRuta - b.kmRuta);
 }
 
+// Desnivel: energía extra acumulada a lo largo de la ruta. Subir cuesta m·g·h (con un 85 % de rendimiento);
+// al bajar se recupera ~60 % frenando con el motor. Estimado. muestras: [{p, km}], alturas: metros.
+export function perfilEnergia(muestras, alturas, pesoKg = 2000) {
+  const m = pesoKg + 150; // coche + personas y equipaje
+  const perfil = [{ km: 0, extra: 0 }];
+  let extra = 0, sube = 0, baja = 0;
+  for (let i = 1; i < muestras.length; i++) {
+    const dh = (alturas[i] ?? alturas[i - 1]) - (alturas[i - 1] ?? 0);
+    const kwh = m * 9.81 * Math.abs(dh) / 3.6e6;
+    if (dh > 0) { extra += kwh / 0.85; sube += dh; } else { extra -= kwh * 0.6; baja -= dh; }
+    perfil.push({ km: muestras[i].km, extra });
+  }
+  return { perfil, sube, baja, total: extra };
+}
+function extraEn(perfil, km) {
+  if (!perfil?.length) return 0;
+  let i = perfil.findIndex((p) => p.km >= km);
+  if (i <= 0) return i === 0 ? perfil[0].extra : perfil.at(-1).extra;
+  const a = perfil[i - 1], b = perfil[i];
+  return a.extra + (b.extra - a.extra) * ((km - a.km) / Math.max(1e-9, b.km - a.km));
+}
+
 // Plan con cargadores reales: en cada tramo, el último cargador rápido al que llegas con margen
 // (y, si hay varios cerca del final, el más potente). Si en un tramo no hay ninguno, parada «teórica».
-export function planConCargadores(km, pctIni, kwh100, cargadores, { llegarCon = 15, paradaEn = 12, cargarHasta = 80 } = {}) {
+// Con «perfil» (desnivel) la batería se calcula tramo a tramo: las subidas gastan más, las bajadas recuperan.
+export function planConCargadores(km, pctIni, kwh100, cargadores, { llegarCon = 15, paradaEn = 12, cargarHasta = 80, perfil = null } = {}) {
   const paradas = [];
   let pos = 0, pct = pctIni;
-  const pctPorKm = kwh100 / 100 / COCHE.util * 100;
+  const E = (x) => x * kwh100 / 100 + extraEn(perfil, x);            // kWh gastados desde el inicio hasta el km x
+  const pctEn = (x) => pct - (E(x) - E(pos)) / COCHE.util * 100;        // % al llegar al km x desde la posición actual
   for (let vuelta = 0; vuelta < 30; vuelta++) {
-    const llegada = pct - (km - pos) * pctPorKm;
+    const llegada = pctEn(km);
     if (llegada >= llegarCon) return { paradas, llegada, minutosCarga: paradas.reduce((s, p) => s + p.minutos, 0) };
-    const alcance = pos + Math.max(0, pct - paradaEn) / pctPorKm;
-    const posibles = cargadores.filter((c) => c.kmRuta > pos + 3 && c.kmRuta + c.desvio <= alcance);
+    let alcance = pos;
+    for (let x = pos + 1; x <= km && pctEn(x) >= paradaEn; x += 1) alcance = x;
+    const desvio = (c) => c.desvio * 2 * kwh100 / 100 / COCHE.util * 100; // ir y volver al cargador
+    const posibles = cargadores.filter((c) => c.kmRuta > pos + 3 && c.kmRuta <= alcance && pctEn(c.kmRuta) - desvio(c) >= paradaEn);
     let elegido = null;
     if (posibles.length) {
       const ultimo = posibles.at(-1).kmRuta;
@@ -242,8 +268,8 @@ export function planConCargadores(km, pctIni, kwh100, cargadores, { llegarCon = 
     }
     const kmParada = elegido ? elegido.kmRuta : alcance;
     if (kmParada - pos < 5 && paradas.length) break;
-    const llegaCon = Math.max(0, pct - (kmParada - pos + (elegido ? elegido.desvio * 2 : 0)) * pctPorKm);
-    const necesario = llegarCon + 3 + (km - kmParada) * pctPorKm;
+    const llegaCon = Math.max(0, pctEn(kmParada) - (elegido ? desvio(elegido) : 0));
+    const necesario = llegarCon + 3 + (E(km) - E(kmParada)) / COCHE.util * 100;
     const hasta = Math.ceil(Math.min(necesario <= cargarHasta ? necesario : cargarHasta, 100));
     const kw = elegido ? Math.min(elegido.potencia || 50, COCHE.dcMax) : 150;
     const alternativas = elegido ? posibles.filter((c) => c !== elegido && c.kmRuta >= kmParada - 60).slice(-2).reverse() : [];

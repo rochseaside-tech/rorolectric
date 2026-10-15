@@ -91,3 +91,12 @@ const extraCiudad = consumo('ciudad', 0, aj) / consumo('ciudad', 20, aj), extraA
 assert.ok(extraCiudad > extraAutovia, `${extraCiudad} vs ${extraAutovia}`);
 assert.equal(consumo('mixto', -2, { ...aj, usoClima: false }), 17.5 * 1.10);
 console.log('Clima ✔');
+
+// Desnivel: subir 1.000 m con 2.150 kg ≈ 6,9 kWh; el mismo viaje cuesta arriba necesita más batería.
+import { perfilEnergia } from './js/calc.js';
+const mu = [{ km: 0 }, { km: 50 }, { km: 100 }];
+const pe = perfilEnergia(mu, [0, 500, 1000], 2000);
+assert.ok(Math.abs(pe.total - 2150 * 9.81 * 1000 / 3.6e6 / 0.85) < 0.01 && pe.sube === 1000);
+const llano = planConCargadores(100, 60, 20, []), subida = planConCargadores(100, 60, 20, [], { perfil: pe.perfil });
+assert.ok(subida.llegada < llano.llegada - 8, `${subida.llegada} vs ${llano.llegada}`);
+console.log('Desnivel ✔');
