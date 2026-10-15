@@ -238,7 +238,7 @@ export const enlaceReve = (c) => (c.reve ? `https://www.mapareve.es/mapa-puntos-
 
 function bloquePrecio(c) {
   const p = c.precio;
-  const libre = c.reve ? `<a class="boton mini sec" style="margin-top:8px" href="${enlaceReve(c)}" target="_blank" rel="noopener">🟢 ¿Está libre ahora? Míralo en REVE</a>` : '';
+  const libre = c.reve ? `<a class="boton mini sec" style="margin-top:8px" href="${enlaceReve(c)}" target="_blank" rel="noopener">🗺️ Ver su ficha en REVE</a>` : '';
   if (!p && c.tarifa) {
     // Francia: lo que la empresa pone en el registro oficial, tal cual (a veces es un enlace a su web).
     const t = /^https?:\/\/\S+$/.test(c.tarifa) ? `<a href="${esc(c.tarifa)}" target="_blank" rel="noopener">ver tarifas en su web</a>` : esc(c.tarifa);
@@ -266,6 +266,38 @@ function bloquePrecio(c) {
 }
 
 /* ---------- ¿Funciona? (REVE) ---------- */
+/* ---------- ¿Libre ahora? (al momento, vía el intermediario de Cloudflare) ---------- */
+const PUENTE = 'https://rorolectric.rorolectric.workers.dev';
+export async function estadoAhora(ids) {
+  if (!ids.length) return {};
+  const r = await fetch(`${PUENTE}/estado?ids=${ids.slice(0, 5).map(encodeURIComponent).join(',')}`);
+  if (!r.ok) throw new Error('sin respuesta');
+  return r.json();
+}
+// Suma los puntos de todos los emplazamientos REVE de un cargador.
+export function resumenAhora(c, datos) {
+  const t = { libres: 0, cargando: 0, fuera: 0, sin: 0, total: 0 };
+  for (const id of c.reves || []) { const x = datos[id]; if (x && !x.error) for (const k in t) t[k] += x[k] || 0; }
+  return t.total ? t : null;
+}
+export function textoAhora(t) {
+  if (!t) return '';
+  if (t.libres) return `🟢 Libre ahora: ${t.libres} de ${t.total}`;
+  if (t.cargando) return `🟠 Ocupado ahora (${t.cargando} cargando)`;
+  if (t.fuera && t.fuera + t.sin >= t.total) return '⛔ Fuera de servicio ahora';
+  return '';
+}
+async function montarAhora(caja, c) {
+  const el = caja.querySelector('#ahora'); if (!el) return;
+  try {
+    const t = resumenAhora(c, await estadoAhora(c.reves));
+    const txt = textoAhora(t);
+    el.className = '';
+    el.style.cssText = `margin-top:4px;font-weight:700;color:${!txt ? 'var(--texto3)' : t.libres ? 'var(--acento)' : t.cargando ? 'var(--ambar)' : 'var(--rojo)'}`;
+    el.innerHTML = txt ? `${txt} <span class="muy-suave" style="font-weight:500">según REVE, al momento</span>` : '<span class="muy-suave">Este cargador no dice a REVE si está libre</span>';
+  } catch { el.innerHTML = '<span class="muy-suave">No he podido mirar si está libre (¿sin cobertura?)</span>'; }
+}
+
 export function textoFunciona(c) {
   const f = c.funcion; if (!f || !f[1]) return '';
   if (c.roto) return f[1] > 1 ? `⛔ No funciona ninguno de sus ${f[1]} puntos` : '⛔ Fuera de servicio';
@@ -292,6 +324,7 @@ export function htmlPopup(c) {
     <div style="font-size:22px;font-weight:750;margin-top:6px">${c.potencia ? `${num(c.potencia)} kW` : c.rapido ? 'Rápido' : 'Potencia sin datos'}
       ${c.potencia > COCHE.dcMax ? `<span class="muy-suave" style="font-weight:500">(tu coche coge hasta ${COCHE.dcMax})</span>` : ''}</div>
     ${lineaFunciona(c)}
+    ${c.reves?.length ? '<div id="ahora" class="muy-suave" style="margin-top:4px">⏳ Mirando si está libre ahora…</div>' : ''}
     ${!c.compatible ? '<div style="color:var(--rojo);font-weight:700">No vale para tu coche (no tiene CCS ni Tipo 2)</div>' : ''}
     ${c.soloSchuko ? '<div style="color:var(--ambar);font-weight:600">Solo enchufe normal: necesitas el cargador portátil del coche</div>' : ''}
     <div class="chips">${c.enchufes.map((e) => `<span class="chip">${e.n ? `${e.n}× ` : ''}${e.nombre}${e.kw ? ` · ${num(e.kw)} kW` : ''}</span>`).join('') || '<span class="chip">Enchufes sin datos</span>'}
@@ -367,6 +400,7 @@ export function abrirFicha(c) {
   abrirHoja(`<div class="ficha">${htmlPopup(c)}</div><div class="botones"><button class="boton sec" data-cerrar>Cerrar</button></div>`, (caja) => {
     caja.addEventListener('click', (e) => { const b = e.target.closest('[data-accion]'); if (b) accionFicha(b, c); });
     montarCoste(caja, c);
+    montarAhora(caja, c);
   });
 }
 
@@ -421,12 +455,25 @@ async function aquiOCasa(caja, c, de, a, r) {
   const yo = ++turnoCasa;
   const ap = ajustes();
   try {
-    const precios = ap.tarifa === 'pvpc' ? await preciosPVPC() : preciosTarifa(ap);
+    let precios = ap.tarifa === 'pvpc' ? await preciosPVPC() : preciosTarifa(ap);
+    // PVPC: los precios de mañana salen hacia las 20:30. Antes, para «esta noche» se usa la madrugada de hoy
+    // (la noche suele costar parecido de un día a otro), y se avisa.
+    let estimado = false;
+    if (ap.tarifa === 'pvpc') {
+      const manana8 = new Date(); manana8.setDate(manana8.getDate() + 1); manana8.setHours(8, 0, 0, 0);
+      const ultima = precios.at(-1)?.hora;
+      if (ultima && ultima < manana8) {
+        const extra = precios.filter((p) => p.hora.getHours() < 8 && p.hora.toDateString() === new Date().toDateString())
+          .map((p) => ({ hora: new Date(p.hora.getTime() + 86400e3), eur: p.eur }));
+        if (extra.length) { precios = [...precios, ...extra]; estimado = true; }
+      }
+    }
     const kwCasa = Math.min(+ap.cargadorCasa || 7.4, COCHE.acMax);
     const v = ventanaBarata(precios, kwhRedAC(de, a), kwCasa);
     if (yo !== turnoCasa || !v) return;
     const ahorro = r.euros - v.coste;
-    el.innerHTML = `🏠 En casa: <b>≈ ${num(v.coste, 2)} €</b> enchufando a las ${hora(v.inicio < new Date() ? new Date() : v.inicio)}${ahorro >= 1 ? ` · aquí pagas ${num(ahorro)} € más` : ''}`;
+    const cuando = v.inicio < new Date() ? 'ya' : `a las ${hora(v.inicio)}`;
+    el.innerHTML = `🏠 En casa: <b>≈ ${num(v.coste, 2)} €</b> enchufando ${cuando}${ahorro >= 1 ? ` · aquí pagas ${num(ahorro)} € más` : ahorro <= -1 ? ` · aquí te sale ${num(-ahorro)} € más barato` : ''}${estimado && v.inicio.getDate() !== new Date().getDate() ? '<br><span class="muy-suave">El precio de esta noche aún no está publicado: calculado con la madrugada de hoy.</span>' : ''}`;
   } catch { if (yo === turnoCasa) el.innerHTML = ''; }
 }
 

@@ -1,7 +1,7 @@
 // Mapa con todos los cargadores (registro oficial + OSM). Verde = rápido, ámbar = 22 kW, gris = lento.
 // Con el mapa muy alejado solo salen los rápidos, para no llenarlo de puntos.
 // Filtros: atajos arriba (rápidos, gratis, tarjeta, favoritos) y el botón «Filtros» con todo lo demás.
-import { enZona, clasePin, abrirFicha, fechaLista, SERVICIOS, precioKwh, precioCorto, textoFunciona } from '../cargadores.js';
+import { enZona, clasePin, abrirFicha, fechaLista, SERVICIOS, precioKwh, precioCorto, textoFunciona, estadoAhora, resumenAhora, textoAhora } from '../cargadores.js';
 import { claveCargador, notaDe, notas, bateria, ajustes, medido, lugares } from '../datos.js';
 import { ubicacion, ultimaUbicacion, esc, num, abrirHoja, cerrarHoja, capaMapa, buscarSitio, aviso } from '../comun.js';
 import { distancia, kmCon, consumo } from '../calc.js';
@@ -103,6 +103,15 @@ function abrirLista(orden = 'cerca') {
       : '<p class="suave">Ninguno con estos filtros en esta zona. Aleja el mapa o quita filtros.</p>'}
     <div class="botones"><button class="boton sec" data-cerrar>Cerrar</button></div>`, (caja) => {
     caja.querySelector('#orden')?.addEventListener('click', (e) => { const b = e.target.closest('[data-o]'); if (b && b.dataset.o !== orden) { cerrarHoja(); abrirLista(b.dataset.o); } });
+    // Si están libres ahora, para los 5 primeros de la lista que lo publican (una sola pregunta).
+    const conReve = lista.map(({ c }) => c).filter((c) => c.reves?.length).slice(0, 5);
+    if (conReve.length) estadoAhora(conReve.map((c) => c.reves[0])).then((datos) => {
+      for (const c of conReve) {
+        const t = resumenAhora({ reves: [c.reves[0]] }, datos), txt = textoAhora(t);
+        const li = caja.querySelector(`[data-k="${claveCargador(c)}"] .cuerpo`);
+        if (li && txt) li.insertAdjacentHTML('beforeend', `<span style="display:block;font-weight:700;color:${t.libres ? 'var(--acento)' : t.cargando ? 'var(--ambar)' : 'var(--rojo)'}">${txt}</span>`);
+      }
+    }).catch(() => { /* sin conexión: sin «libre ahora» */ });
     caja.querySelector('.lista')?.addEventListener('click', (e) => {
       const li = e.target.closest('[data-k]'); if (!li) return;
       cerrarHoja();
