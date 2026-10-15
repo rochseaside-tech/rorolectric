@@ -6,24 +6,37 @@ const PERDIDAS_DC = 0.95;
 // Impuesto eléctrico (5,11 %) e IVA (21 %) sobre el precio del PVPC que publica Red Eléctrica.
 export const IMPUESTOS_LUZ = 1.0511 * 1.21;
 
-// Cuánto sube el consumo con el frío (bomba de calor de serie) o con el aire a tope. Estimado.
-export function factorTemperatura(t) {
+// El frío también afecta sin contar la calefacción: batería fría, aire más denso, ruedas duras. Estimado.
+export function factorFrio(t) {
   if (t == null || Number.isNaN(t)) return 1;
-  if (t < 0) return 1.25;
-  if (t < 5) return 1.15;
-  if (t < 12) return 1.08;
-  if (t > 32) return 1.07;
+  if (t < 0) return 1.10;
+  if (t < 5) return 1.06;
+  if (t < 12) return 1.03;
   return 1;
 }
 
+// Velocidad media de cada tipo de trayecto: el clima gasta por HORA, así que en ciudad pesa mucho más por km.
+export const VELOCIDAD = { ciudad: 25, mixto: 50, autovia110: 100, autovia120: 115 };
+
+// Potencia (kW) que gasta el clima para tener el coche a tu temperatura con la de fuera (en marcha, ya
+// atemperado). Con bomba de calor la calefacción gasta la mitad. Margen de ±3-4 °C en que casi no gasta.
+// Estimado: cuadra con lo que se mide en SUV eléctricos de este tamaño.
+export function climaKw(fuera, dentro = 21, bombaCalor = true) {
+  if (fuera == null || Number.isNaN(fuera) || dentro == null) return 0;
+  if (fuera < dentro - 4) return Math.min(bombaCalor ? 3 : 5, (dentro - fuera) * (bombaCalor ? 0.06 : 0.13));
+  if (fuera > dentro + 3) return Math.min(3, (fuera - dentro) * 0.09);
+  return 0;
+}
+
 // Prioridad: lo que pusiste en Ajustes > lo medido con tus cargas (escalado por tipo de vía) > estimación.
+// Al consumo base (tiempo templado) se le suma el frío y lo que gasta el clima para estar a TU temperatura.
 export function consumo(tipo, temp, ajustes, medido = null) {
   const propio = ajustes?.consumoReal?.[tipo] > 0 ? +ajustes.consumoReal[tipo]
     : medido ? medido.kwh100 * CONSUMO_TIPICO[tipo] / CONSUMO_TIPICO.mixto : null;
   const base = propio > 0 ? +propio : CONSUMO_TIPICO[tipo];
-  // Si el consumo es tuyo (lo miraste en el coche), ya lleva el tiempo que hacía: solo se corrige el frío extremo.
-  return propio > 0 ? base * Math.max(1, factorTemperatura(temp) - 0.08) : base * factorTemperatura(temp);
+  return base * factorFrio(temp) + climaKwDe(temp, ajustes) / VELOCIDAD[tipo] * 100;
 }
+export const climaKwDe = (temp, ajustes) => (ajustes?.usoClima === false ? 0 : climaKw(temp, ajustes?.tempInterior ?? 21, COCHE.bombaCalor));
 
 export const kmCon = (pct, kwh100) => Math.max(0, (pct / 100) * COCHE.util / kwh100 * 100);
 export const pctTras = (km, pctIni, kwh100) => pctIni - (km * kwh100 / 100) / COCHE.util * 100;

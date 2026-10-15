@@ -113,6 +113,8 @@ const AJUSTES_BASE = {
   correccion: { util: null, acMax: null, dcMax: null },
   avisos: { cien: true, neumaticos: true, itv: true, revision: true, seguro: true },
   tempManual: null,
+  tempInterior: 21,           // la temperatura a la que le gusta llevar el coche
+  usoClima: true,
   precioRapida: 0.49,         // €/kWh en carga rápida de calle
   precioLenta: 0.35,
   gasolinaL100: 6,            // el coche de antes, para comparar

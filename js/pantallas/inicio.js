@@ -1,6 +1,6 @@
 // Inicio: batería y autonomía, «¿llego?», recordatorios y el gasto del mes.
-import { COCHE, TIPOS_VIA, ajustes, bateria, ponerBateria, cargas, hechos, marcarHecho, hoyISO, sesion, medido, tempManual, ponerTempManual } from '../datos.js';
-import { consumo, kmCon, pctTras, factorTemperatura, resumen, pctTrasMinutos, horasAC, minutosDC } from '../calc.js';
+import { COCHE, TIPOS_VIA, ajustes, bateria, ponerBateria, cargas, hechos, marcarHecho, hoyISO, sesion, medido, tempManual, ponerTempManual, cambiarAjuste } from '../datos.js';
+import { consumo, kmCon, pctTras, climaKwDe, resumen, pctTrasMinutos, horasAC, minutosDC, tramo } from '../calc.js';
 import { esc, num, euros, anillo, temperatura, aviso, hora, abrirHoja, cerrarHoja } from '../comun.js';
 import { abrirElegirCoche } from '../elegir-coche.js';
 
@@ -84,10 +84,12 @@ function actualizar(raiz) {
   raiz.querySelector('#km').textContent = num(kmCon(pct, c));
   const propio = ajustes().consumoReal[via] > 0, m = medido();
   raiz.querySelector('#km-nota').textContent = `${num(c, 1)} kWh/100 km ${propio ? '(tu consumo)' : m ? `(medido con tus cargas en ${num(m.km)} km)` : '(estimado; se ajusta solo cuando apuntes cargas con los km)'} · hasta 0 %`;
-  const f = factorTemperatura(temp);
-  const aMano = tempManual() != null;
+  const aMano = tempManual() != null, a = ajustes();
+  const templado = consumo(via, 20, { ...a, usoClima: false }, medido());
+  const menos = Math.round((1 - templado / c) * 100);
+  const kw = climaKwDe(temp, a);
   raiz.querySelector('#tiempo').textContent = temp == null ? '🌡️ sin datos del tiempo · ponla tú'
-    : `🌡️ ${num(temp)} °C${aMano ? ' (puesta a mano)' : ''} · ${f > 1 ? `−${Math.round((1 - 1 / f) * 100)} % de autonomía por el ${temp > 30 ? 'aire acondicionado' : 'frío'}` : 'temperatura ideal'} · cambiar`;
+    : `🌡️ Fuera ${num(temp)} °C${aMano ? ' (a mano)' : ''} · dentro ${a.usoClima === false ? 'sin clima' : `${num(a.tempInterior)} °C`} · ${menos > 1 ? `−${menos} % de autonomía${kw ? ` (${kw > 0 && temp > a.tempInterior ? 'aire' : 'calefacción'} ${num(kw, 1)} kW)` : ' por el frío'}` : 'sin pérdidas'} · cambiar`;
 
   const km = +raiz.querySelector('#llego-km').value * +raiz.querySelector('#llego-iv').value;
   const res = raiz.querySelector('#llego-res');
@@ -101,17 +103,56 @@ function actualizar(raiz) {
 }
 
 // La temperatura se puede poner a mano (p. ej. para saber la autonomía mañana a primera hora).
+// Precio de la luz de casa ahora (para decir lo que cuesta el clima). PVPC: se usa una media razonable.
+function precioCasa() {
+  const a = ajustes();
+  if (a.tarifa === 'fija') return +a.precioFijo;
+  if (a.tarifa === 'tramos') return +a.tramos[tramo(new Date())];
+  return 0.15;
+}
+
+// Clima: tu temperatura ideal dentro (se guarda) y la de fuera (la del tiempo o puesta a mano).
+// Con las dos, lo que gasta el clima: km de autonomía y euros por hora.
 function editarTemp(raiz) {
-  abrirHoja(`<h2>Temperatura</h2>
-    <p class="suave">Con frío o calor el coche gasta más. Ponla a mano para calcular otra situación: mañana temprano, la montaña… Vuelve sola a la del tiempo en 12 horas.</p>
-    <label class="campo"><span>Temperatura</span><div class="con-unidad"><input id="t" type="number" inputmode="decimal" step="1" value="${temp ?? ''}"><i>°C</i></div></label>
-    <div class="chips" style="margin-bottom:12px">${[-5, 0, 5, 10, 15, 20, 30, 35].map((v) => `<button type="button" class="chip" data-t="${v}">${v} °C</button>`).join('')}</div>
-    <div class="botones"><button class="boton" id="ok">Usar esta</button>
-      <button class="boton sec" id="real">Usar la del tiempo${tempReal != null ? ` (${num(tempReal)} °C ahora)` : ''}</button></div>`, (caja) => {
+  const a = ajustes();
+  const resumenClima = (fuera, dentro, usa) => {
+    if (fuera == null || fuera === '') return '';
+    const aj = { ...a, tempInterior: +dentro, usoClima: usa };
+    const kw = climaKwDe(+fuera, aj);
+    if (!kw) return `<div class="resultado"><div class="grande">El clima casi no gasta</div><p>Con ${num(+fuera)} °C fuera${usa ? ` y ${num(+dentro)} °C dentro` : ''} no hay que calentar ni enfriar casi nada.</p></div>`;
+    const kmMenos = kmCon(bateria().pct, consumo(via, +fuera, { ...aj, usoClima: false }, medido())) - kmCon(bateria().pct, consumo(via, +fuera, aj, medido()));
+    return `<div class="resultado"><div class="grande">${num(kw, 1)} kW de ${+fuera < +dentro ? 'calefacción' : 'aire'}</div>
+      <p>Tener el coche a ${num(+dentro)} °C con ${num(+fuera)} °C fuera te cuesta ≈ <b>${euros(kw * precioCasa())} por hora</b> (con la luz de casa)
+      y unos <b>${num(kmMenos)} km</b> de autonomía con tu batería (en ${TIPOS_VIA.find(([k]) => k === via)[1].toLowerCase()}).</p>
+      <p class="muy-suave">Truco: pon el clima con la app ${esc(COCHE.app)} mientras está enchufado y sales con la batería entera. ${COCHE.bombaCalor ? 'Tu coche tiene bomba de calor: calienta gastando la mitad.' : ''}</p></div>`;
+  };
+  abrirHoja(`<h2>Clima</h2>
+    <label class="campo"><span>Me gusta llevar el coche a</span><div class="con-unidad"><input id="dentro" type="number" inputmode="decimal" step="0.5" value="${a.tempInterior ?? 21}"><i>°C</i></div></label>
+    <div class="chips" style="margin-bottom:6px">${[19, 20, 21, 22, 23, 24].map((v) => `<button type="button" class="chip" data-d="${v}">${v} °C</button>`).join('')}
+      <button type="button" class="chip ${a.usoClima === false ? 'activo' : ''}" id="sinclima">No pongo el clima</button></div>
+    <label class="campo" style="margin-top:12px"><span>Fuera hace (${tempManual() != null ? 'puesta a mano' : 'la del tiempo'})</span><div class="con-unidad"><input id="t" type="number" inputmode="decimal" step="1" value="${temp ?? ''}"><i>°C</i></div></label>
+    <div class="chips" style="margin-bottom:12px">${[-5, 0, 5, 10, 15, 25, 30, 35].map((v) => `<button type="button" class="chip" data-t="${v}">${v} °C</button>`).join('')}</div>
+    <div id="clima-res"></div>
+    <p class="muy-suave">La de fuera, si la pones a mano (para mañana temprano, la montaña…), vuelve sola a la del tiempo en 12 horas.</p>
+    <div class="botones"><button class="boton" id="ok">Guardar</button>
+      <button class="boton sec" id="real">Fuera: usar la del tiempo${tempReal != null ? ` (${num(tempReal)} °C ahora)` : ''}</button></div>`, (caja) => {
+    let usa = a.usoClima !== false;
+    const res = () => { caja.querySelector('#clima-res').innerHTML = resumenClima(caja.querySelector('#t').value, caja.querySelector('#dentro').value, usa); };
+    res();
+    caja.oninput = res;
     caja.onclick = (e) => {
-      const ch = e.target.closest('[data-t]'); if (ch) caja.querySelector('#t').value = ch.dataset.t;
-      if (e.target.closest('#ok')) { const v = caja.querySelector('#t').value; if (v === '') return; ponerTempManual(+v); temp = +v; cerrarHoja(); actualizar(raiz); }
-      if (e.target.closest('#real')) { ponerTempManual(null); temp = tempReal; cerrarHoja(); actualizar(raiz); }
+      const d = e.target.closest('[data-d]'); if (d) { caja.querySelector('#dentro').value = d.dataset.d; usa = true; caja.querySelector('#sinclima').classList.remove('activo'); }
+      const t = e.target.closest('[data-t]'); if (t) caja.querySelector('#t').value = t.dataset.t;
+      if (e.target.closest('#sinclima')) { usa = !usa; e.target.closest('#sinclima').classList.toggle('activo', !usa); }
+      if (d || t || e.target.closest('#sinclima')) res();
+      if (e.target.closest('#ok')) {
+        cambiarAjuste('tempInterior', +caja.querySelector('#dentro').value || 21);
+        cambiarAjuste('usoClima', usa);
+        const v = caja.querySelector('#t').value;
+        if (v !== '' && +v !== tempReal) { ponerTempManual(+v); temp = +v; }
+        cerrarHoja(); actualizar(raiz);
+      }
+      if (e.target.closest('#real')) { ponerTempManual(null); temp = tempReal; caja.querySelector('#t').value = tempReal ?? ''; res(); }
     };
   });
 }

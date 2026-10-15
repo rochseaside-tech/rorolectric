@@ -80,3 +80,14 @@ assert.ok(Math.abs(consumo('mixto', 20, { consumoReal: {} }, { kwh100: 16 }) - 1
 assert.ok(Math.abs(pctTrasMinutos(30, 200, false, minutosDC(30, 80, 200)) - 80) < 0.5);
 assert.ok(Math.abs(pctTrasMinutos(20, 7.4, true, horasAC(20, 60, 7.4) * 60) - 60) < 0.5);
 console.log('Consumo medido y carga en curso ✔');
+
+// Clima: a 0 °C fuera y 21 dentro, la calefacción pesa mucho más en ciudad que en autovía; templado no gasta.
+import { climaKw } from './js/calc.js';
+assert.equal(climaKw(19, 21), 0);
+assert.ok(Math.abs(climaKw(0, 21, true) - 1.26) < 1e-9);
+assert.ok(climaKw(0, 21, false) > climaKw(0, 21, true));
+const aj = { consumoReal: {}, tempInterior: 21 };
+const extraCiudad = consumo('ciudad', 0, aj) / consumo('ciudad', 20, aj), extraAutovia = consumo('autovia120', 0, aj) / consumo('autovia120', 20, aj);
+assert.ok(extraCiudad > extraAutovia, `${extraCiudad} vs ${extraAutovia}`);
+assert.equal(consumo('mixto', -2, { ...aj, usoClima: false }), 17.5 * 1.10);
+console.log('Clima ✔');
