@@ -50,12 +50,18 @@ jobs:
           path: ~/mapas
           key: mapas-${{ github.run_id }}
           restore-keys: mapas-
+      - name: Recuperar la última copia buena de OpenStreetMap (por si hoy no responde)
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/osm
+          key: osm-${{ github.run_id }}
+          restore-keys: osm-
       - name: Juntar todos los cargadores
         if: env.SOLO_AVERIAS != 'true'
-        run: REVE_DIR="$HOME/reve-datos" node scripts/cargadores.mjs || echo "::warning::No se pudo rehacer la lista hoy; se publica la anterior"
+        run: OSM_CACHE="$HOME/osm" REVE_DIR="$HOME/reve-datos" node scripts/cargadores.mjs || echo "::warning::No se pudo rehacer la lista hoy; se publica la anterior"
       - name: Cargadores de Francia, Portugal y Andorra
         if: env.SOLO_AVERIAS != 'true'
-        run: MAPAS_DIR="$HOME/mapas" node scripts/fuera.mjs || node scripts/fuera.mjs --copiar-publicado || echo "::warning::Hoy no hay cargadores de fuera de España"
+        run: OSM_CACHE="$HOME/osm" MAPAS_DIR="$HOME/mapas" node scripts/fuera.mjs || node scripts/fuera.mjs --copiar-publicado || echo "::warning::Hoy no hay cargadores de fuera de España"
       - name: Guardar el mapa de puntos para las publicaciones de cada hora
         if: env.SOLO_AVERIAS != 'true'
         continue-on-error: true
@@ -63,6 +69,13 @@ jobs:
         with:
           path: ~/mapas
           key: mapas-${{ github.run_id }}
+      - name: Guardar la copia de OpenStreetMap
+        if: env.SOLO_AVERIAS != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ~/osm
+          key: osm-${{ github.run_id }}
       - name: Cargadores de fuera, tal cual están publicados
         if: env.SOLO_AVERIAS == 'true'
         run: node scripts/fuera.mjs --copiar-publicado || echo "::warning::No se pudieron copiar los de fuera"

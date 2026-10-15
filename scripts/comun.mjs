@@ -1,4 +1,5 @@
 // Piezas comunes de los robots de cargadores (España: cargadores.mjs; países vecinos: fuera.mjs).
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
 
 export const TIPO_OSM = { type2_combo: 'C', type2: 'T', type2_cable: 'T', chademo: 'H', schuko: 'S', tesla_supercharger: 'X', type1: 'J', type1_combo: 'J', cee_blue: 'I', cee_red_32a: 'I' };
@@ -123,13 +124,26 @@ export async function descargarOsm(...paises) {
   const filtro = paises[0] === 'con-precio' ? (paises.shift(), '["charge"]') : ''; // solo los que tienen precio apuntado
   const areas = paises.map((p) => `area["ISO3166-1"="${p}"][admin_level=2];`).join('');
   const q = `[out:json][timeout:300];(${areas})->.a;nwr["amenity"="charging_station"]${filtro}(area.a);out center tags;`;
-  for (const url of [...OVERPASS, ...OVERPASS]) { // dos vueltas: a ratos están saturados
+  // Copia de la última respuesta buena (OSM_CACHE, la guarda el workflow): si hoy no responde, se usa esa.
+  const copia = process.env.OSM_CACHE ? `${process.env.OSM_CACHE}/${filtro ? 'precio-' : ''}${paises.join('-')}.json` : null;
+  for (const url of [...OVERPASS, ...OVERPASS, ...OVERPASS]) { // tres vueltas: a ratos están saturados
     try {
-      const r = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'mi-deepal (app personal)' } });
-      if (r.ok) return (await r.json()).elements;
+      const r = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'rorolectric (app personal)' } });
+      if (r.ok) {
+        const els = (await r.json()).elements;
+        if (copia && els.length) { await mkdir(process.env.OSM_CACHE, { recursive: true }); await writeFile(copia, JSON.stringify(els)); }
+        return els;
+      }
       console.warn('Overpass', url, r.status);
     } catch (e) { console.warn('Overpass', url, e.message); }
-    await espera(20000);
+    await espera(+process.env.OSM_ESPERA || 30000);
+  }
+  if (copia) {
+    try {
+      const els = JSON.parse(await readFile(copia, 'utf8'));
+      console.warn(`OpenStreetMap no responde: uso la última copia buena (${els.length} cargadores)`);
+      return els;
+    } catch { /* no hay copia */ }
   }
   throw new Error('OpenStreetMap no responde');
 }
