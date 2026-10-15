@@ -1,7 +1,7 @@
 // Viaje: ruta y paradas en cargadores rápidos REALES de la ruta (como ABRP, pero con la lista oficial).
 import { COCHE, TIPOS_VIA, ajustes, bateria, claveCargador, medido } from '../datos.js';
 import { consumo, planViaje, planConCargadores, muestrearRuta, cargadoresEnRuta, perfilEnergia } from '../calc.js';
-import { enZona, cargarTodos, abrirFicha } from '../cargadores.js';
+import { enZona, cargarTodos, abrirFicha, precioKwh, precioCorto } from '../cargadores.js';
 import { esc, num, euros, duracion, ubicacion, temperatura, campo, aviso, capaMapa, buscarSitio } from '../comun.js';
 
 let form = { desde: '', hasta: '', pct: null, via: 'autovia120', llegar: 15, km: '', temp: '', parada: 12, cargarHasta: 80, minKw: 50 };
@@ -80,7 +80,7 @@ async function rapidosDeLaRuta(ruta) {
 const lineaCargador = (c, extra = '') => `<a href="https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lon}" target="_blank" rel="noopener"
   style="display:block;padding:10px 12px;margin-top:6px;border-radius:10px;background:var(--tarjeta2);text-decoration:none;color:var(--texto);font-size:14px">
   ⚡ <b>${esc(c.nombre)}</b>${c.operador ? ` <span class="suave">· ${esc(c.operador)}</span>` : ''}<br>
-  <span class="suave">${c.potencia ? `${num(c.potencia)} kW` : 'rápido'} · km ${num(c.kmRuta)} · ${c.desvio < 0.3 ? 'en la misma ruta' : `a ${num(c.desvio, 1)} km de la ruta`}${extra}</span></a>`;
+  <span class="suave">${c.potencia ? `${num(c.potencia)} kW` : 'rápido'} · km ${num(c.kmRuta)} · ${c.desvio < 0.3 ? 'en la misma ruta' : `a ${num(c.desvio, 1)} km de la ruta`}${c.precio ? ` · 💶 ${precioCorto(c)}` : ''}${extra}</span></a>`;
 
 async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
   const res = raiz.querySelector('#res');
@@ -116,7 +116,7 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
           ${p.cargador ? lineaCargador(p.cargador) : '<span class="muy-suave">No conozco cargadores rápidos justo en este tramo: mira el Mapa antes de salir.</span>'}
           ${p.alternativas?.length ? `<div class="muy-suave" style="margin-top:8px">Si está ocupado o roto:</div>${p.alternativas.map((a) => lineaCargador(a)).join('')}` : ''}
         </div></li>`).join('')}</ul>
-      <p class="muy-suave" style="margin-top:8px">No sé si están libres ahora mismo (ninguna fuente gratuita lo publica). Por eso siempre te dejo margen para llegar al siguiente.</p></section>` : ''}
+      <p class="muy-suave" style="margin-top:8px">Si están libres ahora lo ves en REVE: toca la parada en el mapa y abre su ficha. Por si acaso, siempre te dejo margen para llegar al siguiente.</p></section>` : ''}
     <section class="tarjeta"><h2>Antes de salir</h2><ul class="lista">
       <li><span class="icono">🔋</span><div class="cuerpo"><b>Sal al 100 %</b><span>${COCHE.quimica === 'LFP' ? 'Tu batería LFP lo aguanta bien y te ahorras paradas.' : 'Para un viaje sí: carga al 100 % justo antes de salir (no lo dejes así días).'}</span></div></li>
       <li><span class="icono">❄️</span><div class="cuerpo"><b>Con frío, clima puesto mientras está enchufado</b><span>Con la app ${COCHE.app}, 20 min antes de salir: calienta con la luz de casa, no con tu batería.</span></div></li>
@@ -146,11 +146,19 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
 // Lo que cuesta el viaje en cargas rápidas, frente a hacerlo en gasolina.
 function costeViaje(km, plan) {
   const a = ajustes();
-  const kwh = plan.paradas.reduce((s, p) => s + Math.max(0, p.hasta - p.llegaCon) / 100 * COCHE.util / 0.95, 0);
-  const calle = kwh * a.precioRapida;
+  // Con el precio de REVE de cada parada si lo hay (el más caro de su horquilla, para no quedarse corto); si no, el de Ajustes.
+  let calle = 0, conReve = 0;
+  for (const p of plan.paradas) {
+    const kwh = Math.max(0, p.hasta - p.llegaCon) / 100 * COCHE.util / 0.95;
+    const precio = p.cargador && precioKwh(p.cargador, { rapida: true, alto: true });
+    if (precio != null) conReve++;
+    calle += kwh * (precio ?? a.precioRapida) + (precio != null ? p.cargador.precio[5] || 0 : 0);
+  }
+  const n = plan.paradas.length;
+  const base = !n ? '' : conReve === n ? '(con el precio oficial de cada parada, de REVE)' : conReve ? `(${conReve} de ${n} paradas con su precio de REVE; el resto a ${euros(a.precioRapida)}/kWh)` : `(a ${euros(a.precioRapida)}/kWh)`;
   const gasolina = km * a.gasolinaL100 / 100 * a.gasolinaPrecio;
-  return `<p style="margin-top:8px"><b>${plan.paradas.length ? `≈ ${euros(calle, 0)} en cargas por el camino` : 'Sin gastar nada por el camino'}</b>
-    (a ${euros(a.precioRapida)}/kWh) · en gasolina serían ≈ ${euros(gasolina, 0)}. Lo que salgas cargado de casa es aparte.</p>`;
+  return `<p style="margin-top:8px"><b>${n ? `≈ ${euros(calle, 0)} en cargas por el camino` : 'Sin gastar nada por el camino'}</b>
+    ${base} · en gasolina serían ≈ ${euros(gasolina, 0)}. Lo que salgas cargado de casa es aparte.</p>`;
 }
 
 export function salir() { mapa?.remove(); mapa = null; }

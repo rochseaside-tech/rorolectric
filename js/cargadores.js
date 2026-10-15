@@ -1,7 +1,8 @@
 // cargadores.js — TODOS los puntos de recarga de España en un archivo (datos/cargadores.json):
 // registro oficial del Ministerio + OpenStreetMap, sin duplicados. Se rehace cada noche solo
 // (.github/workflows/cargadores.yml). Fuera de España se pregunta a OpenStreetMap en directo.
-// Ojo: ninguna fuente gratuita dice si están libres ahora ni el precio de hoy.
+// Precios: los oficiales de REVE (Red Eléctrica), que baja scripts/reve.mjs; si está libre ahora
+// no lo tenemos aquí, pero cada ficha enlaza a la de REVE, que sí lo dice.
 import { esc, num, abrirHoja, cerrarHoja, aviso, fechaBonita } from './comun.js';
 import { distancia } from './calc.js';
 import { COCHE, claveCargador, notaDe, guardarNota, cargas, bateria } from './datos.js';
@@ -14,7 +15,7 @@ const TARJETA = 1, APP = 2, RFID = 4, GRATIS = 8, SIN_REGISTRO = 16, CLIENTES = 
 const CELDA = 0.25;
 export const SERVICIOS = { r: '☕ Cafetería o restaurante', s: '🛒 Tienda o súper', g: '⛽ Gasolinera', h: '🏨 Hotel', p: '🅿️ Parking cubierto' };
 
-let todos = null, rejilla = null, fechaDatos = null, cargando = null;
+let todos = null, rejilla = null, fechaDatos = null, infoReve = null, cargando = null;
 
 export function cargarTodos() {
   if (todos) return Promise.resolve(todos);
@@ -22,7 +23,7 @@ export function cargarTodos() {
     if (!r.ok) throw new Error('No se pudo bajar la lista de cargadores');
     return r.json();
   }).then((d) => {
-    fechaDatos = d.fecha;
+    fechaDatos = d.fecha; infoReve = d.reve || null;
     todos = d.d.map(deFila);
     rejilla = new Map();
     for (const c of todos) {
@@ -35,14 +36,14 @@ export function cargarTodos() {
 }
 export const fechaLista = () => fechaDatos;
 
-function deFila([lat, lon, nombre, operador, potencia, enchufesTxt, pago, horario, dir, puntos, fuente, servicios = ''], i) {
+function deFila([lat, lon, nombre, operador, potencia, enchufesTxt, pago, horario, dir, puntos, fuente, servicios = '', reve = '', precio = 0], i) {
   const enchufes = enchufesTxt ? enchufesTxt.split(',').map((x) => {
     const [, t, n, kw] = x.match(/^(\w)(\d+)(?::(\d+))?$/) || [];
     return { tipo: t, nombre: ENCHUFES[t] || t, n: +n || null, kw: +kw || 0 };
   }) : [];
   const ccs = enchufes.some((e) => e.tipo === 'C');
   return {
-    id: `c${i}`, lat, lon, nombre, operador, potencia, enchufes, ccs, dir, horario, puntos, fuente, servicios,
+    id: `c${i}`, lat, lon, nombre, operador, potencia, enchufes, ccs, dir, horario, puntos, fuente, servicios, reve, precio: precio || null,
     tarjeta: !!(pago & TARJETA), h24: horario === '24h',
     rapido: ccs && (potencia >= 50 || !potencia),
     compatible: !enchufes.length || enchufes.some((e) => 'CTS'.includes(e.tipo)),
@@ -141,13 +142,55 @@ function deOsm(el) {
     Math.round(kw), partes.join(','), pago, t.opening_hours === '24/7' ? '24h' : t.opening_hours || '', t['addr:city'] || '', parseInt(t.capacity, 10) || 0, 'o'], 0), id: `osm${el.id}` };
 }
 
+/* ---------- Precios de REVE ---------- */
+// c.precio = [rápida €/kWh mín, máx, normal mín, máx, €/hora cargando, € fijos por carga, €/hora de plaza ocupada, desde el minuto]
+// €/kWh que pagarías aquí (rápida o normal); null si REVE no lo da. «alto» = el más caro de la horquilla.
+export function precioKwh(c, { rapida = c.rapido, alto = false } = {}) {
+  const p = c.precio; if (!p) return null;
+  const [a, b] = rapida && p[0] != null ? [p[0], p[1]] : p[2] != null ? [p[2], p[3]] : [p[0], p[1]];
+  return a == null ? null : alto ? b ?? a : a;
+}
+const eur = (x) => num(x, 2);
+const horquilla = (a, b) => (b != null && b - a >= 0.01 ? `${eur(a)} a ${eur(b)}` : eur(a));
+// Texto corto para listas: «0,47 €/kWh»
+export function precioCorto(c) {
+  const p = c.precio; if (!p) return '';
+  const k = precioKwh(c);
+  if (k != null) return `${precioKwh(c, { alto: true }) - k >= 0.01 ? 'desde ' : ''}${eur(k)} €/kWh`;
+  return p[4] ? `${eur(p[4])} €/h` : '';
+}
+const fechaCorta = (f) => (f ? new Date(f + 'T12:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : '');
+export const enlaceReve = (c) => (c.reve ? `https://www.mapareve.es/mapa-puntos-recarga/emplazamiento/${encodeURIComponent(c.reve)}` : '');
+
+function bloquePrecio(c) {
+  const p = c.precio;
+  const libre = c.reve ? `<a class="boton mini sec" style="margin-top:8px" href="${enlaceReve(c)}" target="_blank" rel="noopener">🟢 ¿Está libre ahora? Míralo en REVE</a>` : '';
+  if (!p) {
+    if (!c.reve) return '';
+    const bajando = infoReve && !infoReve.tarifasCompletas;
+    return `<div style="margin-top:8px"><span class="muy-suave">${bajando ? 'El precio de este todavía no lo tengo: se están bajando los de toda España y tardan unos días.' : 'Esta empresa no publica el precio en REVE.'}</span><br>${libre}</div>`;
+  }
+  const [rMin, rMax, nMin, nMax, hora, fijo, plaza, desde] = p;
+  const filas = [];
+  if (rMin != null) filas.push(`⚡ Carga rápida: <b>${horquilla(rMin, rMax)} €/kWh</b>`);
+  if (nMin != null) filas.push(`🔌 Carga normal: <b>${horquilla(nMin, nMax)} €/kWh</b>`);
+  if ((rMax != null && rMax - rMin >= 0.01) || (nMax != null && nMax - nMin >= 0.01)) filas.push('<span class="muy-suave">Cambia según la hora o la potencia.</span>');
+  if (hora) filas.push(rMin == null && nMin == null ? `⏱️ Se paga por tiempo: <b>${eur(hora)} €/hora</b>` : `⏱️ Y además ${eur(hora)} €/hora mientras carga`);
+  if (fijo) filas.push(`🎟️ ${eur(fijo)} € por cada carga`);
+  if (plaza) filas.push(`🅿️ Ocupar la plaza ${desde ? `pasados ${desde} min` : 'sin cargar'}: ${eur(plaza)} €/hora`);
+  const fecha = fechaCorta(infoReve?.fecha);
+  return `<div style="margin-top:8px;padding:10px;border-radius:10px;background:var(--tarjeta2);font-size:13px;line-height:1.5">
+    <b style="display:block;margin-bottom:2px">Precio aquí</b>${filas.join('<br>')}
+    <div class="muy-suave" style="margin-top:4px">Precio oficial publicado en REVE (Red Eléctrica de España), IVA incluido${fecha ? ` · datos del ${fecha}` : ''}.</div>${libre}</div>`;
+}
+
 /* ---------- Pintar ---------- */
 export const clasePin = (c) => (!c.compatible ? 'no' : c.rapido ? 'rapido' : c.potencia >= 22 ? 'medio' : 'lento');
 
 export function htmlPopup(c) {
   const como = `https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lon}`;
   const otro = esIphone() ? ['Apple Maps', `https://maps.apple.com/?daddr=${c.lat},${c.lon}`] : ['Waze', `https://waze.com/ul?ll=${c.lat},${c.lon}&navigate=yes`];
-  const fuente = { m: 'Registro oficial', o: 'OpenStreetMap', mo: 'Registro oficial + OpenStreetMap' }[c.fuente] || '';
+  const fuente = [...(c.fuente || '')].map((x) => ({ m: 'Registro oficial', o: 'OpenStreetMap', r: 'REVE (Red Eléctrica)' }[x])).filter(Boolean).join(' + ');
   return `<h3>${esc(c.nombre)}</h3>
     ${c.operador ? `<div class="suave">${esc(c.operador)}</div>` : ''}
     ${c.dir ? `<div class="muy-suave">${esc(c.dir)}</div>` : ''}
@@ -160,6 +203,7 @@ export function htmlPopup(c) {
     ${c.horario ? `<div class="suave">🕒 ${esc(c.horario === '24h' ? 'Abierto 24 h' : c.horario)}</div>` : ''}
     ${c.clientes ? '<div class="suave">Solo para clientes del sitio</div>' : ''}
     ${c.servicios ? `<div class="suave">${[...c.servicios].map((s) => SERVICIOS[s]).filter(Boolean).join(' · ')}</div>` : ''}
+    ${bloquePrecio(c)}
     ${bloquePago(c)}
     ${bloqueMio(c)}
     <div class="fila" style="margin-top:10px">

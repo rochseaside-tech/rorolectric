@@ -1,7 +1,7 @@
 // Mapa con todos los cargadores (registro oficial + OSM). Verde = rápido, ámbar = 22 kW, gris = lento.
 // Con el mapa muy alejado solo salen los rápidos, para no llenarlo de puntos.
 // Filtros: atajos arriba (rápidos, gratis, tarjeta, favoritos) y el botón «Filtros» con todo lo demás.
-import { enZona, clasePin, abrirFicha, fechaLista, SERVICIOS } from '../cargadores.js';
+import { enZona, clasePin, abrirFicha, fechaLista, SERVICIOS, precioKwh, precioCorto } from '../cargadores.js';
 import { claveCargador, notaDe, notas, bateria, ajustes, medido } from '../datos.js';
 import { ubicacion, ultimaUbicacion, esc, num, abrirHoja, cerrarHoja, capaMapa, buscarSitio, aviso } from '../comun.js';
 import { distancia, kmCon, consumo } from '../calc.js';
@@ -75,16 +75,24 @@ export function pintar(raiz, [modo] = []) {
 }
 
 // Los más cercanos (a ti o, si no se sabe dónde estás, al centro del mapa), con los filtros puestos.
-function abrirLista() {
+// «Más baratos»: de los 60 más cercanos, ordenados por el precio de REVE (los que no lo tienen, al final).
+function abrirLista(orden = 'cerca') {
   const desde = dondeEstoy || [mapa.getCenter().lat, mapa.getCenter().lng];
-  const lista = visibles.map((c) => ({ c, d: distancia(desde, [c.lat, c.lon]) })).sort((a, b) => a.d - b.d).slice(0, 30);
+  let lista = visibles.map((c) => ({ c, d: distancia(desde, [c.lat, c.lon]), p: precioKwh(c) })).sort((a, b) => a.d - b.d);
+  if (orden === 'precio') lista = lista.slice(0, 60).sort((a, b) => (a.p ?? 99) - (b.p ?? 99) || a.d - b.d);
+  lista = lista.slice(0, 30);
+  const hayPrecios = visibles.some((c) => c.precio);
   abrirHoja(`<h2>Cerca ${dondeEstoy ? 'de ti' : 'del centro del mapa'}</h2>
+    ${hayPrecios ? `<div class="chips" id="orden" style="margin-bottom:10px">
+      <button class="chip ${orden === 'cerca' ? 'activo' : ''}" data-o="cerca">📍 Más cerca</button>
+      <button class="chip ${orden === 'precio' ? 'activo' : ''}" data-o="precio">💶 Más baratos</button></div>` : ''}
     ${lista.length ? `<ul class="lista">${lista.map(({ c, d }) => `<li data-k="${claveCargador(c)}" style="cursor:pointer">
       <span class="icono" style="background:${{ rapido: '#3FE0B0', medio: '#FFB84D', lento: '#9AA3B1', no: '#5A606B' }[clasePin(c)]};color:#062018;font-weight:800;font-size:13px">${c.potencia ? Math.round(c.potencia) : '⚡'}</span>
-      <div class="cuerpo"><b>${esc(c.nombre)}</b><span>${[c.operador, c.dir].filter(Boolean).map(esc).join(' · ')}</span></div>
+      <div class="cuerpo"><b>${esc(c.nombre)}</b><span>${[c.operador, c.dir].filter(Boolean).map(esc).join(' · ')}</span>${c.precio ? `<span style="display:block;color:var(--acento);font-weight:650">💶 ${precioCorto(c)}</span>` : ''}</div>
       <div class="lado">${d < 1 ? `${Math.round(d * 1000)} m` : `${num(d, 1)} km`}<small class="suave">en línea recta</small></div></li>`).join('')}</ul>`
       : '<p class="suave">Ninguno con estos filtros en esta zona. Aleja el mapa o quita filtros.</p>'}
     <div class="botones"><button class="boton sec" data-cerrar>Cerrar</button></div>`, (caja) => {
+    caja.querySelector('#orden')?.addEventListener('click', (e) => { const b = e.target.closest('[data-o]'); if (b && b.dataset.o !== orden) { cerrarHoja(); abrirLista(b.dataset.o); } });
     caja.querySelector('.lista')?.addEventListener('click', (e) => {
       const li = e.target.closest('[data-k]'); if (!li) return;
       cerrarHoja();
@@ -151,7 +159,7 @@ function abrirFiltros(raiz) {
     <label class="campo"><span>Empresa</span><select id="empresa"><option value="">Todas</option>
       ${OPERADORES.map((o) => `<option value="${o.id}" ${f.empresa === o.id ? 'selected' : ''}>${esc(o.nombre)}</option>`).join('')}</select></label>
     <label class="campo"><span>Mis cargadores</span><div class="chips">${chip('favoritos', 1, '★ Solo favoritos', f.favoritos)}</div></label>
-    <p class="muy-suave">«Gratis», «tarjeta», horario y servicios salen del registro oficial y de OpenStreetMap: si un cargador no los tiene apuntados, no aparece al filtrar. Si está libre ahora o si se puede reservar no lo publica ninguna fuente gratuita.</p>
+    <p class="muy-suave">«Gratis», «tarjeta», horario y servicios salen del registro oficial y de OpenStreetMap: si un cargador no los tiene apuntados, no aparece al filtrar. Para saber si está libre ahora, abre su ficha: lleva un enlace a REVE (Red Eléctrica). Si se puede reservar no lo publica ninguna fuente.</p>
     <div class="botones"><button class="boton" id="ver">Ver cargadores</button><button class="boton sec" id="limpiar">Quitar filtros</button></div>`, (caja) => {
     caja.onclick = (e) => {
       const b = e.target.closest('[data-grupo]');

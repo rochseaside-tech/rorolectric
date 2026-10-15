@@ -3,9 +3,12 @@
 //     punto de recarga público, de cualquier empresa.
 //  2) OpenStreetMap: añade los que no están en el registro (súpers, hoteles, Tesla…) y
 //     datos como «gratis» o «pago con tarjeta».
+//  3) REVE (Red Eléctrica): PRECIO oficial de cada sitio y su ficha en mapareve.es. Lo va bajando
+//     scripts/reve.mjs cada hora en REVE_DIR; aquí solo se junta.
 // Se quitan duplicados (mismo sitio a menos de ~70 m). Uso: node scripts/cargadores.mjs [xml-local]
-// Lo ejecuta cada noche .github/workflows/cargadores.yml.
+// Lo ejecuta cada noche .github/workflows/publicar.yml.
 import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const URL_OFICIAL = 'https://infocar.dgt.es/datex2/v3/miterd/EnergyInfrastructureTablePublication/electrolineras.xml';
 const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
@@ -173,7 +176,72 @@ function juntar(oficiales, osm) {
     sitios.push(o); nuevos++;
     const k = clave(o.lat, o.lon); (rejilla.get(k) || rejilla.set(k, []).get(k)).push(o);
   }
-  return { sitios, nuevos, completados };
+  return { sitios, nuevos, completados, rejilla };
+}
+
+// Precios de los enchufes de un sitio de REVE → [rápida €/kWh mín, máx, normal mín, máx, €/hora, € fijos, €/hora de plaza, desde el minuto]
+function precioSitio(r, precios) {
+  let rMin = Infinity, rMax = 0, nMin = Infinity, nMax = 0, hora = 0, fijo = 0, plaza = 0, desde = Infinity, alguno = false;
+  for (const [id, , kw, dc] of r.enchufes) {
+    const p = precios[id]; if (!p) continue;
+    alguno = true;
+    const [min, max, h, f, pl, de] = p;
+    if (min != null) {
+      if (dc || kw >= 50) { rMin = Math.min(rMin, min); rMax = Math.max(rMax, max); } else { nMin = Math.min(nMin, min); nMax = Math.max(nMax, max); }
+    }
+    hora = Math.max(hora, h); fijo = Math.max(fijo, f);
+    if (pl > 0) { plaza = Math.max(plaza, pl); desde = Math.min(desde, de); }
+  }
+  if (!alguno) return null;
+  const r2 = (x) => Math.round(x * 100) / 100;
+  const hayR = rMin !== Infinity, hayN = nMin !== Infinity;
+  return [hayR ? r2(rMin) : null, hayR ? r2(rMax) : null, hayN ? r2(nMin) : null, hayN ? r2(nMax) : null, r2(hora), r2(fijo), r2(plaza), plaza ? desde : 0];
+}
+const menor = (x, y) => (x == null ? y : y == null ? x : Math.min(x, y));
+const mayor = (x, y) => (x == null ? y : y == null ? x : Math.max(x, y));
+const mezclarPrecio = (a, b) => (!a ? b : !b ? a : [menor(a[0], b[0]), mayor(a[1], b[1]), menor(a[2], b[2]), mayor(a[3], b[3]),
+  Math.max(a[4], b[4]), Math.max(a[5], b[5]), Math.max(a[6], b[6]), a[6] && b[6] ? Math.min(a[7], b[7]) : a[6] ? a[7] : b[7]]);
+
+// REVE: si el sitio ya está (misma empresa a < 100 m, o cualquiera a < 40 m), se le pone el precio; si no, se añade.
+async function juntarReve(sitios, rejilla) {
+  const dir = process.env.REVE_DIR;
+  if (!dir) return null;
+  let r, precios, estado;
+  try {
+    r = JSON.parse(await readFile(join(dir, 'sitios.json'), 'utf8'));
+    precios = JSON.parse(await readFile(join(dir, 'precios.json'), 'utf8'));
+    estado = JSON.parse(await readFile(join(dir, 'estado.json'), 'utf8'));
+  } catch { console.warn('Sin datos de REVE todavía'); return null; }
+  let conPrecio = 0, nuevos = 0, juntados = 0;
+  for (const [id, x] of Object.entries(r)) {
+    if (/pruebas?|^test/i.test(x.nombre)) continue;
+    const s = { lat: x.la, lon: x.lo };
+    const precio = precioSitio(x, precios);
+    const marcas = new Set([x.marca, x.empresa].filter(Boolean).map((n) => marcaDe(n).toLowerCase()));
+    const misma = (o) => marcas.has(marcaDe(o.operador).toLowerCase()) || [...marcas].some((m) => m.length > 3 && marcaDe(o.operador).toLowerCase().startsWith(m));
+    const cerca = vecinos(rejilla, s, 100).sort((a, b) => metros(s, a) - metros(s, b));
+    const m = cerca.find(misma) || cerca.find((o) => !o.reve && metros(s, o) <= 40);
+    if (m) {
+      m.reve ||= id; m.precio = mezclarPrecio(m.precio, precio);
+      if (x.tarjeta) m.pago |= TARJETA;
+      if (!m.horario && x.h24) m.horario = '24h';
+      if (!m.fuente.includes('r')) m.fuente += 'r';
+      juntados++;
+    } else {
+      const enchufes = {};
+      for (const [, t, kw] of x.enchufes) {
+        if (!t) continue;
+        const e = (enchufes[t] ||= { n: 0, kw: 0 }); e.n++; e.kw = Math.max(e.kw, kw < 1000 ? kw : 0);
+      }
+      const n = { lat: x.la, lon: x.lo, nombre: x.nombre || x.marca || x.empresa, operador: x.marca || x.empresa, dir: x.dir, horario: x.h24 ? '24h' : '', pago: x.tarjeta ? TARJETA : 0,
+        enchufes, puntos: 0, servicios: new Set(), fuente: 'r', reve: id, precio };
+      sitios.push(n); nuevos++;
+      const k = clave(n.lat, n.lon); (rejilla.get(k) || rejilla.set(k, []).get(k)).push(n);
+    }
+  }
+  for (const s of sitios) if (s.precio) conPrecio++;
+  console.log(`REVE: ${Object.keys(r).length} sitios (${juntados} ya estaban, ${nuevos} nuevos) · ${conPrecio} con precio`);
+  return { fecha: (estado.actualizado || '').slice(0, 10), sitios: Object.keys(r).length, conPrecio, tarifasCompletas: !!estado.tar?.hecha };
 }
 
 async function descargarOsm() {
@@ -193,9 +261,9 @@ const xml = local ? await readFile(local, 'utf8') : await (await fetch(URL_OFICI
 const oficiales = leerOficial(xml);
 if (oficiales.length < 5000) throw new Error(`El registro oficial trae muy pocos (${oficiales.length}); no se sobrescribe nada`);
 const osm = leerOsm(await descargarOsm());
-const { sitios, nuevos, completados } = juntar(oficiales, osm);
+const { sitios, nuevos, completados, rejilla } = juntar(oficiales, osm);
 
-// Formato compacto: [lat, lon, nombre, operador, kWmax, enchufes, pago, horario, dirección, puntos, fuente, servicios]
+// Formato compacto: [lat, lon, nombre, operador, kWmax, enchufes, pago, horario, dirección, puntos, fuente, servicios, id REVE, precio REVE]
 // enchufes: «C2:150,T4:22» = 2 CCS de hasta 150 kW y 4 Tipo 2 de 22 kW.
 // Nombres legales → marca que se reconoce («REPSOL SOLUCIONES ENERGÉTICAS SA» → «Repsol»).
 const MARCAS = [
@@ -215,6 +283,7 @@ function bonito(n) {
   return t;
 }
 const marcaDe = (n) => (MARCAS.find(([re]) => re.test(n || '')) || [])[1] || bonito(n);
+const reve = await juntarReve(sitios, rejilla);
 
 // Nombres que son códigos internos («B-Sabadell-002», «62047040710009»): mejor la empresa.
 const pareceCodigo = (n) => !n || (/\d/.test(n) && !/\s/.test(n)) || /^[A-Z]{1,3}-[\w-]+-\d+$/.test(n);
@@ -225,8 +294,10 @@ const filas = sitios.map((s) => {
   if (s.nombre.toLowerCase().includes(s.operador.toLowerCase())) s.operador = '';
   const kw = Math.max(s.kwSitio || 0, ...Object.values(s.enchufes).map((e) => e.kw), 0);
   const enchufes = Object.entries(s.enchufes).map(([t, e]) => `${t}${e.n}${e.kw ? ':' + e.kw : ''}`).join(',');
-  return [+s.lat.toFixed(5), +s.lon.toFixed(5), s.nombre, s.operador === s.nombre ? '' : s.operador, kw, enchufes, s.pago, s.horario, s.dir, s.puntos, s.fuente, [...s.servicios].sort().join('')];
+  const fila = [+s.lat.toFixed(5), +s.lon.toFixed(5), s.nombre, s.operador === s.nombre ? '' : s.operador, kw, enchufes, s.pago, s.horario, s.dir, s.puntos, s.fuente, [...s.servicios].sort().join('')];
+  if (s.reve) fila.push(s.reve, s.precio || 0);
+  return fila;
 });
 const fecha = (xml.match(/<com:publicationTime>([^<]+)/) || [])[1]?.slice(0, 10) || new Date().toISOString().slice(0, 10);
-await writeFile(SALIDA, JSON.stringify({ fecha, total: filas.length, d: filas }));
+await writeFile(SALIDA, JSON.stringify({ fecha, total: filas.length, ...(reve ? { reve } : {}), d: filas }));
 console.log(`Oficiales: ${oficiales.length} · OSM: ${osm.length} (${completados} ya estaban, ${nuevos} nuevos) · Total sitios: ${filas.length}`);

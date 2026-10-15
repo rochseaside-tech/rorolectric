@@ -1,0 +1,51 @@
+# Baja de REVE (Red Eléctrica) los precios oficiales de los cargadores, poco a poco: la clave
+# solo deja 5 consultas por hora. Lo que lleva se guarda en la caché de GitHub entre una hora y
+# la siguiente; «Publicar» lo junta cada noche con la lista de cargadores.
+# La clave está en Settings → Secrets → REVE_API_KEY (nunca en el código). Caduca el 15/10/2027.
+name: Precios REVE
+on:
+  schedule:
+    - cron: '7 * * * *'   # cada hora, en el minuto 7
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: write
+concurrency:
+  group: reve
+  cancel-in-progress: false
+jobs:
+  bajar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Recuperar lo que ya está bajado
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/reve-datos
+          key: reve-${{ github.run_id }}
+          restore-keys: reve-
+      - name: Bajar 5 páginas de REVE
+        id: reve
+        env:
+          REVE_API_KEY: ${{ secrets.REVE_API_KEY }}
+        run: REVE_DIR="$HOME/reve-datos" node scripts/reve.mjs
+      - name: Guardar por dónde va
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/reve-datos
+          key: reve-${{ github.run_id }}
+      - name: Borrar las copias viejas (se queda con las 3 últimas)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh cache list --key reve- --sort created_at --order desc --limit 100 --json id --jq '.[3:][].id' | xargs -r -n1 gh cache delete || true
+      - name: Si ha terminado una vuelta completa, publicar ya la app con los precios
+        if: steps.reve.outputs.publicar == 'si'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run publicar.yml --ref main
