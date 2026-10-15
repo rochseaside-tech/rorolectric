@@ -67,12 +67,27 @@ export function modeloManual(m = {}) {
     fuente: 'Datos que pusiste tú; el resto (consumo y curva de carga) es una estimación.', notas: [],
   };
 }
-function ponerModelo(id, manual) {
+// «correccion»: datos de fábrica que la persona ha cambiado (batería útil que ha perdido capacidad, etc.).
+function ponerModelo(id, manual, correccion = {}) {
   for (const k of Object.keys(COCHE)) delete COCHE[k];
   if (id === 'otro') Object.assign(COCHE, modeloManual(manual), { id });
   else Object.assign(COCHE, MODELOS[id] || MODELOS.s05pro, { id: MODELOS[id] ? id : 's05pro' });
+  COCHE.fabrica = { util: COCHE.util, acMax: COCHE.acMax, dcMax: COCHE.dcMax };
+  for (const k of ['util', 'acMax', 'dcMax']) if (+correccion?.[k] > 0) COCHE[k] = +correccion[k];
   Object.assign(CONSUMO_TIPICO, COCHE.consumo);
 }
+export function corregirCoche(k, v) {
+  estado.ajustes.correccion[k] = v > 0 ? +v : null;
+  ponerModelo(estado.ajustes.coche, estado.ajustes.cocheManual, estado.ajustes.correccion);
+  guardar();
+}
+
+// Temperatura puesta a mano: vale 12 horas; luego vuelve sola la del tiempo.
+export function tempManual() {
+  const t = estado.ajustes.tempManual;
+  return t && Date.now() - t.cuando < 12 * 3600e3 ? t.valor : null;
+}
+export function ponerTempManual(valor) { estado.ajustes.tempManual = valor == null ? null : { valor: +valor, cuando: Date.now() }; guardar(); }
 // LFP: cargar al 100 % está bien (y una vez por semana, recomendado). NMC: 80 % en el día a día.
 export const objetivoRecomendado = () => (COCHE.quimica === 'LFP' ? 100 : 80);
 
@@ -95,6 +110,9 @@ const AJUSTES_BASE = {
   cargadorCasa: 7.4,
   objetivoCasa: 100,
   consumoReal: { ciudad: null, mixto: null, autovia110: null, autovia120: null },
+  correccion: { util: null, acMax: null, dcMax: null },
+  avisos: { cien: true, neumaticos: true, itv: true, revision: true, seguro: true },
+  tempManual: null,
   precioRapida: 0.49,         // €/kWh en carga rápida de calle
   precioLenta: 0.35,
   gasolinaL100: 6,            // el coche de antes, para comparar
@@ -115,11 +133,13 @@ function leer() {
   try { guardado = JSON.parse(localStorage.getItem(CLAVE)) || {}; } catch { /* sin almacenamiento */ }
   // Quien ya la usaba antes de poder elegir coche tenía el S05 Pro.
   if (guardado.ajustes && !guardado.ajustes.coche) guardado.ajustes.coche = 's05pro';
-  ponerModelo(guardado.ajustes?.coche, guardado.ajustes?.cocheManual);
+  ponerModelo(guardado.ajustes?.coche, guardado.ajustes?.cocheManual, guardado.ajustes?.correccion);
   return {
     ajustes: { ...AJUSTES_BASE, ...(guardado.ajustes || {}),
       tramos: { ...AJUSTES_BASE.tramos, ...(guardado.ajustes?.tramos || {}) },
-      consumoReal: { ...AJUSTES_BASE.consumoReal, ...(guardado.ajustes?.consumoReal || {}) } },
+      consumoReal: { ...AJUSTES_BASE.consumoReal, ...(guardado.ajustes?.consumoReal || {}) },
+      correccion: { ...AJUSTES_BASE.correccion, ...(guardado.ajustes?.correccion || {}) },
+      avisos: { ...AJUSTES_BASE.avisos, ...(guardado.ajustes?.avisos || {}) } },
     bateria: guardado.bateria || { pct: 80, fecha: null },
     cargas: guardado.cargas || [],
     hechos: guardado.hechos || {},   // recordatorios marcados: { neumaticos: '2026-10-15' }
@@ -138,6 +158,7 @@ export function elegirCoche(id, manual = null) {
   const antes = COCHE.quimica, primeraVez = !estado.ajustes.coche;
   estado.ajustes.coche = id;
   if (manual) estado.ajustes.cocheManual = manual;
+  estado.ajustes.correccion = { util: null, acMax: null, dcMax: null }; // las correcciones eran del coche anterior
   ponerModelo(id, estado.ajustes.cocheManual);
   // Al cambiar de tipo de batería, el «cargar hasta» de casa pasa al recomendado; el consumo apuntado era de otro coche.
   if (primeraVez || antes !== COCHE.quimica) estado.ajustes.objetivoCasa = objetivoRecomendado();

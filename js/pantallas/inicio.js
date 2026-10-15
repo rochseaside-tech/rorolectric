@@ -1,11 +1,11 @@
 // Inicio: batería y autonomía, «¿llego?», recordatorios y el gasto del mes.
-import { COCHE, TIPOS_VIA, ajustes, bateria, ponerBateria, cargas, hechos, marcarHecho, hoyISO, sesion, medido } from '../datos.js';
+import { COCHE, TIPOS_VIA, ajustes, bateria, ponerBateria, cargas, hechos, marcarHecho, hoyISO, sesion, medido, tempManual, ponerTempManual } from '../datos.js';
 import { consumo, kmCon, pctTras, factorTemperatura, resumen, pctTrasMinutos, horasAC, minutosDC } from '../calc.js';
-import { esc, num, euros, anillo, temperatura, aviso, hora } from '../comun.js';
+import { esc, num, euros, anillo, temperatura, aviso, hora, abrirHoja, cerrarHoja } from '../comun.js';
 import { abrirElegirCoche } from '../elegir-coche.js';
 
 let via = 'mixto';
-let temp = null;
+let temp = null, tempReal = null;
 
 export function pintar(raiz) {
   const b = bateria();
@@ -27,7 +27,7 @@ export function pintar(raiz) {
       <div class="chips" id="vias" style="justify-content:center;margin-top:12px">
         ${TIPOS_VIA.map(([k, t]) => `<button class="chip ${k === via ? 'activo' : ''}" data-via="${k}">${t}</button>`).join('')}
       </div>
-      <div class="tiempo-chip" id="tiempo">🌡️ mirando el tiempo…</div>
+      <div><button class="tiempo-chip" id="tiempo" style="border:0;font:inherit;font-size:13px;cursor:pointer">🌡️ mirando el tiempo…</button></div>
       <div><button class="tiempo-chip" id="mi-coche" style="border:0;font:inherit;font-size:13px;cursor:pointer">🚗 ${esc(COCHE.nombre)} · cambiar</button></div>
     </section>
 
@@ -73,7 +73,9 @@ export function pintar(raiz) {
   actualizar(raiz);
   pintarRecordatorios(raiz);
   pintarMes(raiz);
-  temperatura().then((t) => { temp = t; if (raiz.isConnected) actualizar(raiz); });
+  temp = tempManual();
+  raiz.querySelector('#tiempo').onclick = () => editarTemp(raiz);
+  temperatura().then((t) => { tempReal = t; if (tempManual() == null) temp = t; if (raiz.isConnected) actualizar(raiz); });
 }
 
 function actualizar(raiz) {
@@ -83,8 +85,9 @@ function actualizar(raiz) {
   const propio = ajustes().consumoReal[via] > 0, m = medido();
   raiz.querySelector('#km-nota').textContent = `${num(c, 1)} kWh/100 km ${propio ? '(tu consumo)' : m ? `(medido con tus cargas en ${num(m.km)} km)` : '(estimado; se ajusta solo cuando apuntes cargas con los km)'} · hasta 0 %`;
   const f = factorTemperatura(temp);
-  raiz.querySelector('#tiempo').textContent = temp == null ? '🌡️ sin datos del tiempo'
-    : `🌡️ ${num(temp)} °C · ${f > 1 ? `−${Math.round((1 - 1 / f) * 100)} % de autonomía por el ${temp > 30 ? 'aire acondicionado' : 'frío'}` : 'temperatura ideal'}`;
+  const aMano = tempManual() != null;
+  raiz.querySelector('#tiempo').textContent = temp == null ? '🌡️ sin datos del tiempo · ponla tú'
+    : `🌡️ ${num(temp)} °C${aMano ? ' (puesta a mano)' : ''} · ${f > 1 ? `−${Math.round((1 - 1 / f) * 100)} % de autonomía por el ${temp > 30 ? 'aire acondicionado' : 'frío'}` : 'temperatura ideal'} · cambiar`;
 
   const km = +raiz.querySelector('#llego-km').value * +raiz.querySelector('#llego-iv').value;
   const res = raiz.querySelector('#llego-res');
@@ -95,6 +98,22 @@ function actualizar(raiz) {
     : llegada >= 5 ? `Justito: llegarías con un ${Math.round(llegada)} %` : 'No llegas sin cargar';
   res.innerHTML = `<div class="resultado ${clase}" style="margin-top:12px"><div class="grande">${texto}</div>
     <p>${llegada >= 15 ? 'Con margen de sobra para imprevistos.' : llegada >= 5 ? 'Mejor para un rato a cargar por el camino o al llegar.' : `Necesitas unos ${Math.ceil(15 - llegada)} puntos más de batería. Mira la pestaña Viaje: te dice dónde parar.`}</p></div>`;
+}
+
+// La temperatura se puede poner a mano (p. ej. para saber la autonomía mañana a primera hora).
+function editarTemp(raiz) {
+  abrirHoja(`<h2>Temperatura</h2>
+    <p class="suave">Con frío o calor el coche gasta más. Ponla a mano para calcular otra situación: mañana temprano, la montaña… Vuelve sola a la del tiempo en 12 horas.</p>
+    <label class="campo"><span>Temperatura</span><div class="con-unidad"><input id="t" type="number" inputmode="decimal" step="1" value="${temp ?? ''}"><i>°C</i></div></label>
+    <div class="chips" style="margin-bottom:12px">${[-5, 0, 5, 10, 15, 20, 30, 35].map((v) => `<button type="button" class="chip" data-t="${v}">${v} °C</button>`).join('')}</div>
+    <div class="botones"><button class="boton" id="ok">Usar esta</button>
+      <button class="boton sec" id="real">Usar la del tiempo${tempReal != null ? ` (${num(tempReal)} °C ahora)` : ''}</button></div>`, (caja) => {
+    caja.onclick = (e) => {
+      const ch = e.target.closest('[data-t]'); if (ch) caja.querySelector('#t').value = ch.dataset.t;
+      if (e.target.closest('#ok')) { const v = caja.querySelector('#t').value; if (v === '') return; ponerTempManual(+v); temp = +v; cerrarHoja(); actualizar(raiz); }
+      if (e.target.closest('#real')) { ponerTempManual(null); temp = tempReal; cerrarHoja(); actualizar(raiz); }
+    };
+  });
 }
 
 function haceCuanto(iso) {
@@ -113,26 +132,27 @@ function pintarRecordatorios(raiz) {
 
   // LFP: una carga al 100 % a la semana para que el coche calcule bien el %.
   const ultimo100 = [h.cien, ...cargas().filter((c) => +c.hasta >= 100).map((c) => c.fecha)].filter(Boolean).sort().at(-1);
-  if (COCHE.quimica === 'LFP' && (!ultimo100 || dias(ultimo100) <= -7)) lista.push({ icono: '💯', clave: 'cien', titulo: 'Carga al 100 % esta semana',
+  const av = a.avisos;
+  if (av.cien && COCHE.quimica === 'LFP' && (!ultimo100 || dias(ultimo100) <= -7)) lista.push({ icono: '💯', clave: 'cien', titulo: 'Carga al 100 % esta semana',
     texto: 'Tu batería es LFP: una vez a la semana al 100 % para que el % del coche no se descuadre.' });
 
-  if (!h.neumaticos || dias(h.neumaticos) <= -30) lista.push({ icono: '🛞', clave: 'neumaticos', titulo: 'Mira la presión de las ruedas',
+  if (av.neumaticos && (!h.neumaticos || dias(h.neumaticos) <= -30)) lista.push({ icono: '🛞', clave: 'neumaticos', titulo: 'Mira la presión de las ruedas',
     texto: 'Una vez al mes, en frío. El coche la enseña en la pantalla. Con poca presión gastas más.' });
 
-  if (a.matriculacion) {
+  if (av.itv && a.matriculacion) {
     const m = new Date(a.matriculacion + 'T12:00');
     const itv = new Date(m); itv.setFullYear(m.getFullYear() + 4);
     const d = dias(hoyISO(itv));
     if (d <= 60) lista.push({ icono: '🧾', titulo: d < 0 ? 'ITV caducada' : `ITV en ${d} días`, texto: `Primera ITV: ${itv.toLocaleDateString('es-ES')}. Pide cita antes.`, urgente: d < 15 });
   }
-  if (a.revisionFecha) {
+  if (av.revision && a.revisionFecha) {
     const d = dias(a.revisionFecha);
     if (d <= 45) lista.push({ icono: '🔧', titulo: d < 0 ? 'Revisión pasada de fecha' : `Revisión en ${d} días`, texto: 'Pide cita en el taller oficial para no perder la garantía.', urgente: d < 10 });
   }
-  if (a.revisionKm && a.kmActuales && +a.revisionKm - +a.kmActuales <= 1500) {
+  if (av.revision && a.revisionKm && a.kmActuales && +a.revisionKm - +a.kmActuales <= 1500) {
     lista.push({ icono: '🔧', titulo: `Revisión en ${num(Math.max(0, a.revisionKm - a.kmActuales))} km`, texto: 'Te acercas a los km de la revisión.', urgente: true });
   }
-  if (a.seguroFecha) {
+  if (av.seguro && a.seguroFecha) {
     const d = dias(a.seguroFecha);
     if (d <= 30 && d >= -5) lista.push({ icono: '🛡️', titulo: `El seguro se renueva en ${d} días`, texto: 'Buen momento para pedir otros precios.' });
   }

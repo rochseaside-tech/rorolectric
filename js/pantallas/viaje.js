@@ -4,7 +4,7 @@ import { consumo, planViaje, planConCargadores, muestrearRuta, cargadoresEnRuta 
 import { enZona, cargarTodos, abrirFicha } from '../cargadores.js';
 import { esc, num, euros, duracion, ubicacion, temperatura, campo, aviso, capaMapa, buscarSitio } from '../comun.js';
 
-let form = { desde: '', hasta: '', pct: null, via: 'autovia120', llegar: 15, km: '' };
+let form = { desde: '', hasta: '', pct: null, via: 'autovia120', llegar: 15, km: '', temp: '', parada: 12, cargarHasta: 80, minKw: 50 };
 let mapa = null;
 
 export function pintar(raiz) {
@@ -17,6 +17,13 @@ export function pintar(raiz) {
       <div class="fila">${campo('Salgo con', 'pct', form.pct, { unidad: '%' })}${campo('Llegar con al menos', 'llegar', form.llegar, { unidad: '%' })}</div>
       <label class="campo"><span>Por dónde</span><select name="via">${TIPOS_VIA.map(([k, t]) => `<option value="${k}" ${k === form.via ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <button class="boton" type="submit">Planificar</button>
+      <details style="margin-top:12px"><summary class="suave" style="cursor:pointer">Más opciones (temperatura, paradas…)</summary>
+        <div style="margin-top:10px">
+          ${campo('Temperatura del viaje (vacío = la del tiempo)', 'temp', form.temp, { unidad: '°C', paso: '1' })}
+          <div class="fila">${campo('Parar a cargar con', 'parada', form.parada, { unidad: '%' })}${campo('Cargar hasta', 'cargarHasta', form.cargarHasta, { unidad: '%' })}</div>
+          <label class="campo"><span>Parar solo en cargadores de</span><select name="minKw">${[[50, '50 kW o más'], [100, '100 kW o más'], [150, '150 kW o más']].map(([v, t]) => `<option value="${v}" ${+form.minKw === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+        </div>
+      </details>
       <details style="margin-top:12px"><summary class="suave" style="cursor:pointer">¿No encuentra el sitio? Pon los km a mano</summary>
         <div style="margin-top:10px">${campo('Kilómetros', 'km', form.km, { unidad: 'km' })}<button class="boton sec" type="button" id="manual">Calcular con esos km</button></div>
       </details>
@@ -63,12 +70,13 @@ const lineaCargador = (c, extra = '') => `<a href="https://www.google.com/maps/d
 async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
   const res = raiz.querySelector('#res');
   res.innerHTML = '<div class="tarjeta suave">Buscando cargadores en la ruta…</div>';
-  const temp = await temperatura(origen?.punto);
+  const temp = form.temp !== '' && form.temp != null ? +form.temp : await temperatura(origen?.punto);
   const c = consumo(form.via, temp, ajustes(), medido());
   let enRuta = [];
   if (ruta) { try { enRuta = await rapidosDeLaRuta(ruta); } catch { /* sin lista: plan teórico */ } }
-  const opciones = { llegarCon: +form.llegar || 10 };
-  const plan = ruta && enRuta.length ? planConCargadores(km, +form.pct, c, enRuta, opciones) : planViaje(km, +form.pct, c, opciones);
+  const opciones = { llegarCon: +form.llegar || 10, paradaEn: Math.max(3, +form.parada || 12), cargarHasta: Math.min(100, Math.max(30, +form.cargarHasta || 80)) };
+  const validos = enRuta.filter((x) => (x.potencia || 50) >= +form.minKw);
+  const plan = ruta && validos.length ? planConCargadores(km, +form.pct, c, validos, opciones) : planViaje(km, +form.pct, c, opciones);
   const n = plan.paradas.length;
   // OSRM calcula a velocidad legal; a 110 se tarda un poco más.
   const conduccion = horas ? horas * (form.via === 'autovia110' ? 1.06 : 1) : km / (form.via.startsWith('autovia') ? 100 : 60);
@@ -79,7 +87,7 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
       <p>${num(km)} km${origen ? ` desde ${esc(origen.nombre)} hasta ${esc(destino.nombre)}` : ''}. Conduciendo ${duracion(conduccion * 60)}${n ? `; en total unas ${duracion(conduccion * 60 + plan.minutosCarga + n * 5)}` : ''}.
       ${plan.llegada != null ? `Llegas con un <b>${Math.round(plan.llegada)} %</b>.` : ''}</p>
       ${costeViaje(km, plan)}
-      <p class="muy-suave">Consumo usado: ${num(c, 1)} kWh/100 km${temp != null ? ` con ${num(temp)} °C` : ''}. ${ruta ? `${enRuta.length} cargadores rápidos a menos de 3 km de la ruta.` : ''} Paradas con al menos un 12 %, cargando hasta el 80 % o lo justo para llegar.</p>
+      <p class="muy-suave">Consumo usado: ${num(c, 1)} kWh/100 km${temp != null ? ` con ${num(temp)} °C` : ''}. ${ruta ? `${enRuta.length} cargadores rápidos a menos de 3 km de la ruta.` : ''} Paradas con al menos un ${opciones.paradaEn} %, cargando hasta el ${opciones.cargarHasta} % o lo justo para llegar, en cargadores de ${form.minKw} kW o más (cámbialo en «Más opciones»).</p>
     </div>
     ${ruta ? '<div id="mapa-viaje" class="mapa bajo"></div>' : ''}
     ${n ? `<section class="tarjeta"><h2>Paradas</h2><ul class="lista">${plan.paradas.map((p, i) => `

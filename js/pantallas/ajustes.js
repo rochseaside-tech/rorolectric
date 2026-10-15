@@ -1,5 +1,5 @@
 // Ajustes: tarifa de luz, cargador de casa, consumo real, fechas para avisos, tema.
-import { COCHE, CARGADORES_CASA, TIPOS_VIA, CONSUMO_TIPICO, ajustes, cambiarAjuste, cambiarAjusteDe, borrarTodo } from '../datos.js';
+import { COCHE, CARGADORES_CASA, TIPOS_VIA, CONSUMO_TIPICO, ajustes, cambiarAjuste, cambiarAjusteDe, borrarTodo, corregirCoche } from '../datos.js';
 import { campo, aviso, esc, num } from '../comun.js';
 import { fechaLista, cargarTodos } from '../cargadores.js';
 import { abrirElegirCoche } from '../elegir-coche.js';
@@ -30,6 +30,23 @@ export function pintar(raiz) {
       <label class="campo"><span>Con qué cargas en casa</span><select name="cargadorCasa">
         ${CARGADORES_CASA.map(([kw, t]) => `<option value="${kw}" ${kw === +a.cargadorCasa ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       ${campo('Cargar en casa normalmente hasta', 'objetivoCasa', a.objetivoCasa, { unidad: '%' })}
+    </section>
+
+    <section class="tarjeta">
+      <h2>Datos de tu coche</h2>
+      <p class="suave">Vienen de fábrica. Cámbialos si los tuyos son otros: por ejemplo, si con los años la batería ha perdido capacidad. Vacío = el de fábrica.</p>
+      <div class="rejilla">
+        ${campo(`Batería útil (fábrica ${num(COCHE.fabrica.util, 1)})`, 'correccion.util', a.correccion.util ?? '', { unidad: 'kWh' })}
+        ${campo(`Carga en casa máx. (fábrica ${COCHE.fabrica.acMax})`, 'correccion.acMax', a.correccion.acMax ?? '', { unidad: 'kW' })}
+        ${campo(`Carga rápida máx. (fábrica ${COCHE.fabrica.dcMax})`, 'correccion.dcMax', a.correccion.dcMax ?? '', { unidad: 'kW' })}
+      </div>
+    </section>
+
+    <section class="tarjeta">
+      <h2>Avisos</h2>
+      <div class="chips" id="avisos">${[['cien', '💯 Cargar al 100 % (baterías LFP)'], ['neumaticos', '🛞 Presión de ruedas'], ['itv', '🧾 ITV'], ['revision', '🔧 Revisión'], ['seguro', '🛡️ Seguro']]
+        .map(([k, t]) => `<button type="button" class="chip ${a.avisos[k] ? 'activo' : ''}" data-aviso="${k}">${t}</button>`).join('')}</div>
+      <p class="muy-suave" style="margin-top:8px">Encendido = te lo recuerdo en la pantalla Coche.</p>
     </section>
 
     <section class="tarjeta">
@@ -85,6 +102,11 @@ export function pintar(raiz) {
     <button class="boton peligro" id="borrar" style="margin-bottom:20px">Borrar todos mis datos</button>`;
 
   raiz.querySelector('#cambiar-coche').onclick = () => abrirElegirCoche();
+  raiz.querySelector('#avisos').onclick = (e) => {
+    const b = e.target.closest('[data-aviso]'); if (!b) return;
+    const k = b.dataset.aviso, v = !ajustes().avisos[k];
+    cambiarAjusteDe('avisos', k, v); b.classList.toggle('activo', v); aviso(v ? 'Aviso encendido' : 'Aviso quitado');
+  };
   raiz.querySelector('#instalar')?.addEventListener('click', async () => {
     window.instalarApp.prompt();
     await window.instalarApp.userChoice;
@@ -96,7 +118,8 @@ export function pintar(raiz) {
     const { name, value, type } = e.target;
     if (!name) return;
     const v = type === 'number' ? (value === '' ? null : +value) : value;
-    if (name.includes('.')) { const [g, k] = name.split('.'); cambiarAjusteDe(g, k, v); } else cambiarAjuste(name, v);
+    if (name.startsWith('correccion.')) corregirCoche(name.split('.')[1], v);
+    else if (name.includes('.')) { const [g, k] = name.split('.'); cambiarAjusteDe(g, k, v); } else cambiarAjuste(name, v);
     if (name === 'tarifa') { raiz.querySelector('#fija').classList.toggle('oculto', value !== 'fija'); raiz.querySelector('#tramos').classList.toggle('oculto', value !== 'tramos'); }
     aviso('Guardado');
   };
