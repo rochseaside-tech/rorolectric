@@ -35,6 +35,47 @@ function* leerCsv(txt) {
 const si = (v) => /^(true|1|oui|vrai)$/i.test((v || '').trim());
 const recortar = (t, n = 140) => (t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t);
 
+// El precio en número, sacado del texto libre de «tarification», en el formato de REVE:
+// [rápida €/kWh mín, máx, normal mín, máx, €/hora cargando, € fijos, €/hora de plaza, desde el minuto].
+// Entiende «0,29€ / kWh», «49 cts/kWh», «HPC 49cts/Kwh», «AC 36cts/KWh», «0,30 € HT / kWh» (+20 % de IVA),
+// «0,025€ / min», «9€ + 0,49€/kWh», «… 1,5€ par heure d'occupation» y el JSON {"energyPrice":…}.
+export function precioFr(texto, rapido) {
+  let t = String(texto || '').trim();
+  if (!t || /^https?:/i.test(t)) return null;
+  const r2 = (x) => Math.round(x * 100) / 100;
+  let kwhR = [], kwhN = [], hora = 0, fijo = 0, plaza = 0;
+  const pon = (v, etiqueta) => {
+    if (!(v >= 0.05 && v <= 1.5)) return;
+    const dc = /hpc|dc|rapide|ccs|combo|chademo/i.test(etiqueta || ''), ac = /\bac\b|normale|lente|t2|type ?2/i.test(etiqueta || '');
+    (dc || (!ac && rapido) ? kwhR : kwhN).push(v);
+  };
+  if (t.startsWith('{')) {
+    try {
+      const j = JSON.parse(t);
+      pon(+j.energyPrice); fijo = +j.fixedPrice || 0; if (+j.timePrice) hora = +j.timePrice * 60;
+    } catch { return null; }
+  } else {
+    const l = t.toLowerCase().replace(/(\d),(\d)/g, '$1.$2');
+    const ht = /\bht\b/.test(l) && !/\bttc\b/.test(l) ? 1.2 : 1; // sin IVA → con el 20 % francés
+    // Cada trozo separado por «;», «|», « - » o salto de línea puede llevar su etiqueta (AC, HPC…)
+    for (const trozo of l.split(/[;|\n]| - /)) {
+      for (const m of trozo.matchAll(/(\d+(?:\.\d+)?)\s*(?:€|e|eur|euros?)\s*(?:ttc|ht)?\s*(?:\/|par|le|de)?\s*kwh/g)) pon(+m[1] * ht, trozo.slice(0, m.index));
+      for (const m of trozo.matchAll(/(\d+(?:\.\d+)?)\s*(?:cts?|centimes?|c€|cents?)\s*(?:ttc|ht)?\s*(?:\/|par|le|de)?\s*kwh/g)) pon(+m[1] / 100 * ht, trozo.slice(0, m.index));
+      for (const m of trozo.matchAll(/(\d+(?:\.\d+)?)\s*(?:€|e|eur|euros?)\s*(?:ttc|ht)?\s*(?:\/|par|la|le)\s*(?:min|minute)/g)) {
+        if (/occup|stationn|parking|apr[eè]s/.test(trozo)) plaza = Math.max(plaza, +m[1] * 60 * ht); else hora = Math.max(hora, +m[1] * 60 * ht);
+      }
+      for (const m of trozo.matchAll(/(\d+(?:\.\d+)?)\s*(?:€|e|eur|euros?)\s*(?:ttc|ht)?\s*(?:\/|par)\s*(?:h|heure)\b/g)) {
+        if (/occup|stationn|parking|branch|apr[eè]s/.test(trozo)) plaza = Math.max(plaza, +m[1] * ht);
+      }
+      const f = trozo.match(/(\d+(?:\.\d+)?)\s*€\s*(?:ttc|ht)?\s*\+/); // «9€ + 0,49€/kWh»: 9 € por sesión
+      if (f && +f[1] <= 15) fijo = Math.max(fijo, +f[1] * ht);
+    }
+  }
+  if (!kwhR.length && !kwhN.length && !hora) return null;
+  return [kwhR.length ? r2(Math.min(...kwhR)) : null, kwhR.length ? r2(Math.max(...kwhR)) : null,
+    kwhN.length ? r2(Math.min(...kwhN)) : null, kwhN.length ? r2(Math.max(...kwhN)) : null, r2(hora), r2(fijo), r2(plaza), 0];
+}
+
 // «tarification» es texto libre; algunos lo ponen en JSON ({"energyPrice":0.51,…}).
 function tarifaFr(t) {
   t = (t || '').replace(/\s+/g, ' ').trim();
@@ -89,7 +130,7 @@ function leerFrancia(txt) {
     if (/r.serv/i.test(v(f, 'condition_acces'))) e.pago |= CLIENTES;
     const h = v(f, 'horaires');
     if (!e.horario && h) e.horario = /^24\/7$/.test(h) ? '24h' : recortar(h, 60);
-    if (!e.tarifa) e.tarifa = tarifaFr(v(f, 'tarification'));
+    if (!e.tarifa) { e.tarifa = tarifaFr(v(f, 'tarification')); if (e.tarifa) e.tarifaCruda = v(f, 'tarification'); }
   }
   // Varias estaciones del mismo operador en el mismo sitio (< 40 m) → un solo sitio
   const rejilla = new Map(), sitios = [];
@@ -97,11 +138,17 @@ function leerFrancia(txt) {
     const igual = vecinos(rejilla, s, 40).find((o) => o.operador === s.operador);
     if (igual) {
       sumarEnchufes(igual.enchufes, s.enchufes); igual.puntos += s.puntos; igual.pago |= s.pago;
-      if (!igual.tarifa) igual.tarifa = s.tarifa;
+      if (!igual.tarifa) { igual.tarifa = s.tarifa; igual.tarifaCruda = s.tarifaCruda; }
       continue;
     }
     sitios.push(s);
     const k = clave(s.lat, s.lon); (rejilla.get(k) || rejilla.set(k, []).get(k)).push(s);
+  }
+  // El precio en número (para colores del mapa, «más baratos» y el coste del viaje).
+  for (const s of sitios) {
+    const rapido = Object.entries(s.enchufes).some(([t, e]) => 'CH'.includes(t) && e.kw >= 50);
+    s.precio = precioFr(s.tarifaCruda, rapido);
+    delete s.tarifaCruda;
   }
   return sitios;
 }

@@ -262,7 +262,9 @@ function bloquePrecio(c) {
   const fecha = fechaCorta(infoReve?.fecha);
   return `<div style="margin-top:8px;padding:10px;border-radius:10px;background:var(--tarjeta2);font-size:13px;line-height:1.5">
     <b style="display:block;margin-bottom:2px">Precio aquí</b>${filas.join('<br>')}
-    <div class="muy-suave" style="margin-top:4px">Precio oficial publicado en REVE (Red Eléctrica de España), IVA incluido${fecha ? ` · datos del ${fecha}` : ''}.</div>${libre}</div>`;
+    <div class="muy-suave" style="margin-top:4px">${c.fuente === 'f'
+      ? `Lo que publica la empresa en el registro oficial de Francia${c.tarifa && !/^https?:/.test(c.tarifa) ? `: «${esc(c.tarifa)}»` : ''}. Compruébalo en el poste.`
+      : `Precio oficial publicado en REVE (Red Eléctrica de España), IVA incluido${fecha ? ` · datos del ${fecha}` : ''}.`}</div>${libre}</div>`;
 }
 
 /* ---------- ¿Funciona? (REVE) ---------- */
