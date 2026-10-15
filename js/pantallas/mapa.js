@@ -2,13 +2,14 @@
 // Con el mapa muy alejado solo salen los rápidos, para no llenarlo de puntos.
 // Filtros: atajos arriba (rápidos, gratis, tarjeta, favoritos) y el botón «Filtros» con todo lo demás.
 import { enZona, clasePin, htmlPopup, fechaLista, enlazarFichas, SERVICIOS } from '../cargadores.js';
-import { claveCargador, notaDe, notas } from '../datos.js';
-import { ubicacion, ultimaUbicacion, esc, num, abrirHoja, cerrarHoja } from '../comun.js';
+import { claveCargador, notaDe, notas, bateria, ajustes, medido } from '../datos.js';
+import { ubicacion, ultimaUbicacion, esc, num, abrirHoja, cerrarHoja, capaMapa, buscarSitio, aviso } from '../comun.js';
+import { distancia, kmCon, consumo } from '../calc.js';
 import { OPERADORES, operadorDe } from '../operadores.js';
 
 const FILTROS_BASE = { minKw: 0, ccs: false, tipo2: false, gratis: false, tarjeta: false, h24: false, servicios: [], empresa: '', sinClientes: false, favoritos: false, compatibles: true };
 let filtros = leerFiltros();
-let mapa = null, capa = null, yo = null, datos = [];
+let mapa = null, capa = null, yo = null, datos = [], visibles = [], marcadores = new Map(), aro = null, verRango = false, dondeEstoy = null, abrirLuego = null;
 
 function leerFiltros() {
   try { return { ...FILTROS_BASE, ...JSON.parse(localStorage.getItem('filtros-mapa') || '{}') }; } catch { return { ...FILTROS_BASE }; }
@@ -41,6 +42,8 @@ const ATAJOS = [
 
 export function pintar(raiz) {
   raiz.innerHTML = `
+    <form class="mapa-busca" id="busca"><input id="q" type="search" placeholder="Buscar ciudad, calle o sitio…" enterkeyhint="search" autocomplete="off">
+      <button class="boton mini sec" type="button" id="lista">☰ Cerca</button></form>
     <div class="chips" id="filtros" style="margin:6px 0 12px;flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px"></div>
     <div class="mapa-envoltorio">
       <div id="mapa"></div>
@@ -51,7 +54,7 @@ export function pintar(raiz) {
   if (!window.L) { raiz.querySelector('#estado').textContent = 'No se pudo cargar el mapa. ¿Tienes conexión?'; return; }
 
   mapa = L.map('mapa', { zoomControl: false, attributionControl: true }).setView(ultimaUbicacion(), 13);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(mapa);
+  capaMapa(mapa);
   capa = L.layerGroup().addTo(mapa);
   enlazarFichas(mapa, (k) => datos.find((c) => claveCargador(c) === k));
 
@@ -60,17 +63,63 @@ export function pintar(raiz) {
   mapa.on('popupopen', () => { fichaAbierta = true; }).on('popupclose', () => { fichaAbierta = false; });
   mapa.on('moveend', () => { clearTimeout(espera); if (!fichaAbierta) espera = setTimeout(() => cargar(raiz), 350); });
   raiz.querySelector('#yo').onclick = () => centrar(raiz, true);
+  raiz.querySelector('#busca').onsubmit = async (e) => {
+    e.preventDefault();
+    const q = raiz.querySelector('#q'); q.blur();
+    if (!q.value.trim()) return;
+    try { const s = await buscarSitio(q.value); mapa.setView(s.punto, 14); } catch (err) { aviso(err.message); }
+  };
+  raiz.querySelector('#lista').onclick = () => abrirLista();
   centrar(raiz, false);
+}
+
+// Los más cercanos (a ti o, si no se sabe dónde estás, al centro del mapa), con los filtros puestos.
+function abrirLista() {
+  const desde = dondeEstoy || [mapa.getCenter().lat, mapa.getCenter().lng];
+  const lista = visibles.map((c) => ({ c, d: distancia(desde, [c.lat, c.lon]) })).sort((a, b) => a.d - b.d).slice(0, 30);
+  abrirHoja(`<h2>Cerca ${dondeEstoy ? 'de ti' : 'del centro del mapa'}</h2>
+    ${lista.length ? `<ul class="lista">${lista.map(({ c, d }) => `<li data-k="${claveCargador(c)}" style="cursor:pointer">
+      <span class="icono" style="background:${{ rapido: '#3FE0B0', medio: '#FFB84D', lento: '#9AA3B1', no: '#5A606B' }[clasePin(c)]};color:#062018;font-weight:800;font-size:13px">${c.potencia ? Math.round(c.potencia) : '⚡'}</span>
+      <div class="cuerpo"><b>${esc(c.nombre)}</b><span>${[c.operador, c.dir].filter(Boolean).map(esc).join(' · ')}</span></div>
+      <div class="lado">${d < 1 ? `${Math.round(d * 1000)} m` : `${num(d, 1)} km`}<small class="suave">en línea recta</small></div></li>`).join('')}</ul>`
+      : '<p class="suave">Ninguno con estos filtros en esta zona. Aleja el mapa o quita filtros.</p>'}
+    <div class="botones"><button class="boton sec" data-cerrar>Cerrar</button></div>`, (caja) => {
+    caja.querySelector('.lista')?.addEventListener('click', (e) => {
+      const li = e.target.closest('[data-k]'); if (!li) return;
+      cerrarHoja();
+      const c = visibles.find((x) => claveCargador(x) === li.dataset.k); if (!c) return;
+      // Al moverse el mapa se repintan los puntos: la ficha se abre en cuanto estén.
+      abrirLuego = li.dataset.k;
+      mapa.setView([c.lat, c.lon], Math.max(mapa.getZoom(), 15));
+    });
+  });
+}
+
+// «Hasta dónde llego»: círculo con lo que da la batería (hasta el 10 %), en línea recta
+// (por carretera se hace más camino, por eso se recorta un 20 %).
+function pintarRango() {
+  aro?.remove(); aro = null;
+  if (!verRango || !mapa) return;
+  const centro = dondeEstoy || [mapa.getCenter().lat, mapa.getCenter().lng];
+  const km = kmCon(Math.max(0, bateria().pct - 10), consumo('mixto', null, ajustes(), medido())) * 0.8;
+  aro = L.layerGroup([
+    L.circle(centro, { radius: km * 1000, color: '#2BB8F0', weight: 2, fillOpacity: 0.06, interactive: false }),
+    L.marker(L.latLng(centro[0] + km / 111, centro[1]), { interactive: false,
+      icon: L.divIcon({ className: '', html: `<div class="rango-etiqueta">🔋 ${bateria().pct} % · ≈ ${num(km)} km</div>`, iconSize: [150, 24], iconAnchor: [75, 12] }) }),
+  ]).addTo(mapa);
+  mapa.fitBounds(L.latLng(centro).toBounds(km * 2000), { padding: [20, 20] });
 }
 
 function pintarAtajos(raiz) {
   const n = cuantos();
   const el = raiz.querySelector('#filtros');
   el.innerHTML = `<button class="chip ${n ? 'activo' : ''}" data-f="todos" style="flex:none">⚙︎ Filtros${n ? ` (${n})` : ''}</button>
-    ${ATAJOS.map(([k, t, activo]) => `<button class="chip ${activo() ? 'activo' : ''}" data-f="${k}" style="flex:none">${t}</button>`).join('')}`;
+    ${ATAJOS.map(([k, t, activo]) => `<button class="chip ${activo() ? 'activo' : ''}" data-f="${k}" style="flex:none">${t}</button>`).join('')}
+    <button class="chip ${verRango ? 'activo' : ''}" data-f="rango" style="flex:none">🔋 Hasta dónde llego</button>`;
   el.onclick = (e) => {
     const b = e.target.closest('[data-f]'); if (!b) return;
     if (b.dataset.f === 'todos') { abrirFiltros(raiz); return; }
+    if (b.dataset.f === 'rango') { verRango = !verRango; pintarAtajos(raiz); pintarRango(); return; }
     ATAJOS.find(([k]) => k === b.dataset.f)[3]();
     aplicar(raiz);
   };
@@ -122,6 +171,7 @@ async function centrar(raiz, forzar) {
   const p = await ubicacion({ forzar });
   if (!mapa) return;
   if (p) {
+    dondeEstoy = p;
     mapa.setView(p, Math.max(mapa.getZoom(), 13));
     yo?.remove();
     yo = L.marker(p, { icon: L.divIcon({ className: '', html: '<div class="yo"></div>', iconSize: [18, 18] }), interactive: false }).addTo(mapa);
@@ -129,6 +179,7 @@ async function centrar(raiz, forzar) {
     raiz.querySelector('#estado').textContent = 'No me dejan ver dónde estás: activa la ubicación del navegador.';
   }
   cargar(raiz);
+  if (verRango) pintarRango();
 }
 
 async function cargar(raiz) {
@@ -149,19 +200,23 @@ async function cargar(raiz) {
 function dibujar(raiz) {
   if (!capa) return;
   capa.clearLayers();
+  marcadores = new Map();
   // Muy alejado y sin filtro de potencia: solo los rápidos (y tus favoritos), para no saturar el mapa.
   const lejos = mapa.getZoom() < 11 && filtros.minKw < 50 && !filtros.favoritos;
-  const lista = datos.filter((c) => pasa(c) && (!lejos || (c.rapido && c.compatible) || notaDe(c)?.fav));
+  visibles = datos.filter(pasa);
+  const lista = visibles.filter((c) => !lejos || (c.rapido && c.compatible) || notaDe(c)?.fav);
   for (const c of lista) {
     const txt = c.potencia ? (c.potencia >= 1000 ? '' : Math.round(c.potencia)) : c.rapido ? '⚡' : '';
-    L.marker([c.lat, c.lon], { zIndexOffset: c.rapido ? 500 : 0,
+    const m = L.marker([c.lat, c.lon], { zIndexOffset: c.rapido ? 500 : 0,
       icon: L.divIcon({ className: '', html: `<div class="pin ${clasePin(c)}" ${notaDe(c)?.fav ? 'style="outline:3px solid #FFD84D;outline-offset:1px"' : ''}><span style="font-size:${String(txt).length > 2 ? 10 : 12}px">${esc(txt)}</span></div>`, iconSize: [28, 28], iconAnchor: [14, 30], popupAnchor: [0, -28] }),
     }).bindPopup(htmlPopup(c), { maxWidth: 300 }).addTo(capa);
+    marcadores.set(claveCargador(c), m);
   }
+  if (abrirLuego && marcadores.has(abrirLuego)) { marcadores.get(abrirLuego).openPopup(); abrirLuego = null; }
   const f = fechaLista();
   raiz.querySelector('#estado').textContent = (lista.length
     ? `${num(lista.length)}${lejos ? ' rápidos' : ''} aquí${lejos ? ' (acerca para ver todos)' : ''}`
     : 'Ninguno aquí con estos filtros') + (f ? ` · lista del ${new Date(f + 'T12:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}` : '');
 }
 
-export function salir() { mapa?.remove(); mapa = null; capa = null; yo = null; }
+export function salir() { mapa?.remove(); mapa = null; capa = null; yo = null; aro = null; }

@@ -103,4 +103,21 @@ export const anillo = (pct, tam = 210, grosor = 16) => {
       stroke-dasharray="${circ}" stroke-dashoffset="${circ * (1 - pct / 100)}" style="transition:stroke-dashoffset .4s"/></svg>`;
 };
 
+// Mapa base de OpenStreetMap (gratis, sin clave). Con el tema oscuro se invierten los colores
+// por CSS (.mapa-oscuro): queda un mapa oscuro de verdad, no uno gris apagado.
+// (CARTO pide clave de pago desde 2026: probado y descartado.)
+export function capaMapa(mapa) {
+  return L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© OpenStreetMap', className: document.documentElement.dataset.tema !== 'claro' ? 'mapa-oscuro' : '',
+  }).addTo(mapa);
+}
+
+// Buscar un sitio por su nombre (OpenStreetMap).
+export async function buscarSitio(texto) {
+  const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=es&countrycodes=es,fr,pt,ad,it,de,ch,be,nl&q=${encodeURIComponent(texto)}`);
+  const d = await r.json();
+  if (!d.length) throw new Error(`No encuentro «${texto}». Prueba con el pueblo o la ciudad.`);
+  return { punto: [+d[0].lat, +d[0].lon], nombre: d[0].display_name.split(',').slice(0, 2).join(',') };
+}
+
 export const certeza = (n) => `<span class="certeza ${n}">${{ alta: 'Seguro', media: 'Bastante seguro', baja: 'Compruébalo' }[n]}</span>`;

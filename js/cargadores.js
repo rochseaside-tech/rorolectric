@@ -7,6 +7,7 @@ import { distancia } from './calc.js';
 import { COCHE, claveCargador, notaDe, guardarNota, cargas, bateria } from './datos.js';
 import { operadorDe, enlaceApp, enlacePago, esIphone, COMODINES } from './operadores.js';
 import { abrirFormCarga } from './pantallas/diario.js';
+import { cargarAqui } from './pantallas/cargar.js';
 
 const ENCHUFES = { C: 'CCS', T: 'Tipo 2', H: 'CHAdeMO', S: 'Schuko', X: 'Tesla', J: 'Tipo 1', I: 'Industrial' };
 const TARJETA = 1, APP = 2, RFID = 4, GRATIS = 8, SIN_REGISTRO = 16, CLIENTES = 32;
@@ -170,6 +171,9 @@ export function htmlPopup(c) {
       <button class="boton mini sec" data-accion="nota" data-k="${claveCargador(c)}">📝 Nota</button>
       <button class="boton mini sec" data-accion="carga" data-k="${claveCargador(c)}">⚡ Apuntar</button>
     </div>
+    <div class="fila" style="margin-top:8px">
+      <button class="boton mini" data-accion="cargo" data-k="${claveCargador(c)}">▶ Empiezo a cargar aquí</button>
+    </div>
     <div class="muy-suave" style="margin-top:8px">${fuente}</div>`;
 }
 
@@ -222,6 +226,10 @@ export function enlazarFichas(mapa, buscar) {
       aviso(fav ? 'Guardado en favoritos' : 'Quitado de favoritos');
     } else if (accion === 'nota') {
       abrirNota(c, () => mapa.closePopup());
+    } else if (accion === 'cargo') {
+      const op = operadorDe(c.operador, c.nombre);
+      mapa.closePopup();
+      cargarAqui({ sitio: c.nombre, kw: c.potencia || (c.rapido ? 50 : 22), operador: op?.id || '', cargadorK: claveCargador(c) });
     } else if (accion === 'carga') {
       const op = operadorDe(c.operador, c.nombre);
       abrirFormCarga({ lugar: c.gratis ? 'gratis' : c.rapido ? 'rapida' : 'lenta', sitio: c.nombre, operador: op?.id || '', cargadorK: claveCargador(c), desde: bateria().pct });

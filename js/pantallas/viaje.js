@@ -1,8 +1,8 @@
 // Viaje: ruta y paradas en cargadores rápidos REALES de la ruta (como ABRP, pero con la lista oficial).
-import { COCHE, TIPOS_VIA, ajustes, bateria, claveCargador } from '../datos.js';
+import { COCHE, TIPOS_VIA, ajustes, bateria, claveCargador, medido } from '../datos.js';
 import { consumo, planViaje, planConCargadores, muestrearRuta, cargadoresEnRuta } from '../calc.js';
 import { enZona, cargarTodos, htmlPopup, enlazarFichas } from '../cargadores.js';
-import { esc, num, duracion, ubicacion, temperatura, campo, aviso } from '../comun.js';
+import { esc, num, euros, duracion, ubicacion, temperatura, campo, aviso, capaMapa, buscarSitio } from '../comun.js';
 
 let form = { desde: '', hasta: '', pct: null, via: 'autovia120', llegar: 15, km: '' };
 let mapa = null;
@@ -26,13 +26,6 @@ export function pintar(raiz) {
   const leer = () => { form = { ...form, ...Object.fromEntries(new FormData(f)) }; };
   f.onsubmit = (e) => { e.preventDefault(); leer(); planificar(raiz); };
   raiz.querySelector('#manual').onclick = () => { leer(); if (+form.km > 0) mostrar(raiz, { km: +form.km }); else aviso('Pon los km'); };
-}
-
-async function buscarSitio(texto) {
-  const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=es&countrycodes=es,fr,pt,ad,it,de,ch,be,nl&q=${encodeURIComponent(texto)}`);
-  const d = await r.json();
-  if (!d.length) throw new Error(`No encuentro «${texto}». Prueba con el pueblo o la ciudad.`);
-  return { punto: [+d[0].lat, +d[0].lon], nombre: d[0].display_name.split(',').slice(0, 2).join(',') };
 }
 
 async function planificar(raiz) {
@@ -71,7 +64,7 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
   const res = raiz.querySelector('#res');
   res.innerHTML = '<div class="tarjeta suave">Buscando cargadores en la ruta…</div>';
   const temp = await temperatura(origen?.punto);
-  const c = consumo(form.via, temp, ajustes());
+  const c = consumo(form.via, temp, ajustes(), medido());
   let enRuta = [];
   if (ruta) { try { enRuta = await rapidosDeLaRuta(ruta); } catch { /* sin lista: plan teórico */ } }
   const opciones = { llegarCon: +form.llegar || 10 };
@@ -85,6 +78,7 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
       <div class="grande">${plan.imposible ? 'Así no llegas' : n ? `${n} parada${n > 1 ? 's' : ''} · ${duracion(plan.minutosCarga)} cargando` : 'Sin parar a cargar'}</div>
       <p>${num(km)} km${origen ? ` desde ${esc(origen.nombre)} hasta ${esc(destino.nombre)}` : ''}. Conduciendo ${duracion(conduccion * 60)}${n ? `; en total unas ${duracion(conduccion * 60 + plan.minutosCarga + n * 5)}` : ''}.
       ${plan.llegada != null ? `Llegas con un <b>${Math.round(plan.llegada)} %</b>.` : ''}</p>
+      ${costeViaje(km, plan)}
       <p class="muy-suave">Consumo usado: ${num(c, 1)} kWh/100 km${temp != null ? ` con ${num(temp)} °C` : ''}. ${ruta ? `${enRuta.length} cargadores rápidos a menos de 3 km de la ruta.` : ''} Paradas con al menos un 12 %, cargando hasta el 80 % o lo justo para llegar.</p>
     </div>
     ${ruta ? '<div id="mapa-viaje" class="mapa bajo"></div>' : ''}
@@ -106,7 +100,7 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
   if (!ruta || !window.L) return;
   mapa?.remove();
   mapa = L.map('mapa-viaje', { zoomControl: false });
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(mapa);
+  capaMapa(mapa);
   const linea = L.polyline(ruta, { color: '#2BB8F0', weight: 5, opacity: .9 }).addTo(mapa);
   mapa.fitBounds(linea.getBounds(), { padding: [24, 24] });
   enlazarFichas(mapa, (k) => enRuta.find((x) => claveCargador(x) === k));
@@ -122,6 +116,16 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
     L.marker(sitio, { zIndexOffset: 1000, icon: L.divIcon({ className: '', html: `<div class="pin parada"><span style="color:#fff">${i + 1}</span></div>`, iconSize: [28, 28], iconAnchor: [14, 30], popupAnchor: [0, -28] }) })
       .bindPopup(htmlPopup(p.cargador), { maxWidth: 300 }).addTo(mapa);
   });
+}
+
+// Lo que cuesta el viaje en cargas rápidas, frente a hacerlo en gasolina.
+function costeViaje(km, plan) {
+  const a = ajustes();
+  const kwh = plan.paradas.reduce((s, p) => s + Math.max(0, p.hasta - p.llegaCon) / 100 * COCHE.util / 0.95, 0);
+  const calle = kwh * a.precioRapida;
+  const gasolina = km * a.gasolinaL100 / 100 * a.gasolinaPrecio;
+  return `<p style="margin-top:8px"><b>${plan.paradas.length ? `≈ ${euros(calle, 0)} en cargas por el camino` : 'Sin gastar nada por el camino'}</b>
+    (a ${euros(a.precioRapida)}/kWh) · en gasolina serían ≈ ${euros(gasolina, 0)}. Lo que salgas cargado de casa es aparte.</p>`;
 }
 
 export function salir() { mapa?.remove(); mapa = null; }

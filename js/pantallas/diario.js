@@ -1,6 +1,6 @@
 // Gastos: cada carga apuntada, resumen por mes y comparación con la gasolina.
 import { COCHE, ajustes, cambiarAjuste, cargas, guardarCarga, borrarCarga, hoyISO, exportar, importar } from '../datos.js';
-import { resumen } from '../calc.js';
+import { resumen, co2Ahorrado } from '../calc.js';
 import { esc, num, euros, fechaBonita, abrirHoja, cerrarHoja, aviso, campo } from '../comun.js';
 
 export const LUGARES = {
@@ -31,7 +31,8 @@ export function pintar(raiz) {
         <div class="dato verde"><b>${r.eur100 != null ? euros(r.eur100) : '—'}</b><span>cada 100 km${r.eur100 == null ? ' (apunta los km del coche en 2 cargas)' : ''}</span></div>
         <div class="dato"><b>${euros(r.gasolina100)}</b><span>cada 100 km con gasolina</span></div>
       </div>
-      ${r.ahorro != null ? `<div class="resultado" style="margin:14px 0 0"><div class="grande">${euros(r.ahorro, 0)} ahorrados</div><p>en ${num(r.kmHechos)} km, frente a tu coche de gasolina (${num(ajustes().gasolinaL100, 1)} L/100 km a ${euros(ajustes().gasolinaPrecio)}/L; cámbialo en Ajustes).</p></div>` : ''}
+      ${r.ahorro != null ? `<div class="resultado" style="margin:14px 0 0"><div class="grande">${euros(r.ahorro, 0)} ahorrados</div><p>en ${num(r.kmHechos)} km, frente a tu coche de gasolina (${num(ajustes().gasolinaL100, 1)} L/100 km a ${euros(ajustes().gasolinaPrecio)}/L; cámbialo en Ajustes).</p>
+        <p>🌱 Y unos <b>${num(co2Ahorrado(r.kmHechos, r.kwh, ajustes()))} kg de CO₂</b> menos (estimado).</p></div>` : ''}
       ${grafMeses(meses)}
     </section>
     ${Object.entries(meses).map(([mes, lista]) => `
@@ -50,12 +51,14 @@ export function pintar(raiz) {
       <h2>Copia de seguridad</h2>
       <p class="suave">Tus datos viven solo en este móvil. Guarda una copia de vez en cuando (en Archivos o mándatela por WhatsApp).</p>
       <div class="botones"><button class="boton sec" id="exportar">Guardar copia</button>
+        ${todas.length ? '<button class="boton sec" id="csv">Pasar a Excel (hoja de cálculo)</button>' : ''}
         <label class="boton sec">Restaurar una copia<input type="file" accept=".json,application/json" id="importar" hidden></label></div>
     </section>`;
 
   raiz.querySelector('#nueva').onclick = () => abrirFormCarga({});
   raiz.querySelectorAll('[data-id]').forEach((li) => { li.onclick = () => abrirFormCarga(todas.find((c) => c.id === li.dataset.id)); });
   raiz.querySelector('#exportar').onclick = guardarCopia;
+  raiz.querySelector('#csv')?.addEventListener('click', () => compartirArchivo(hojaCalculo(todas), `rorolectric-gastos-${hoyISO()}.csv`, 'text/csv'));
   raiz.querySelector('#importar').onchange = async (e) => {
     const f = e.target.files[0]; if (!f) return;
     try { importar(await f.text()); aviso('Copia restaurada'); pintar(raiz); } catch (err) { aviso(err.message || 'No se pudo leer el archivo'); }
@@ -70,6 +73,26 @@ function grafMeses(meses) {
     const t = l.reduce((s, c) => s + (+c.euros || 0), 0);
     return `<div class="elegida" style="height:${Math.max(4, t / max * 100)}%"></div>`;
   }).join('')}</div><div class="eje">${ult.map(([m]) => `<span>${new Date(m + '-15').toLocaleDateString('es-ES', { month: 'short' })}</span>`).join('')}</div>`;
+}
+
+// CSV con punto y coma y coma decimal: así lo abre bien Excel en español.
+function hojaCalculo(lista) {
+  const n = (v) => (v === '' || v == null ? '' : String(v).replace('.', ','));
+  const filas = [['Fecha', 'Dónde', 'Sitio', 'kWh', 'Euros', '€/kWh', 'Batería al llegar %', 'Al acabar %', 'Km del coche']];
+  for (const c of [...lista].reverse()) {
+    filas.push([c.fecha, LUGARES[c.lugar]?.[1] || '', c.sitio || '', n(c.kwh), n(c.euros), +c.kwh && +c.euros ? n((c.euros / c.kwh).toFixed(3)) : '', c.desde ?? '', c.hasta ?? '', c.km ?? '']);
+  }
+  return '\ufeff' + filas.map((f) => f.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+}
+
+async function compartirArchivo(texto, nombre, tipo) {
+  const archivo = new File([texto], nombre, { type: tipo });
+  try {
+    if (navigator.canShare?.({ files: [archivo] })) { await navigator.share({ files: [archivo], title: nombre }); return; }
+  } catch (e) { if (e.name === 'AbortError') return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(archivo); a.download = nombre; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
 async function guardarCopia() {

@@ -1,7 +1,7 @@
 // Inicio: batería y autonomía, «¿llego?», recordatorios y el gasto del mes.
-import { COCHE, TIPOS_VIA, ajustes, bateria, ponerBateria, cargas, hechos, marcarHecho, hoyISO } from '../datos.js';
-import { consumo, kmCon, pctTras, factorTemperatura, resumen } from '../calc.js';
-import { esc, num, euros, anillo, temperatura, aviso } from '../comun.js';
+import { COCHE, TIPOS_VIA, ajustes, bateria, ponerBateria, cargas, hechos, marcarHecho, hoyISO, sesion, medido } from '../datos.js';
+import { consumo, kmCon, pctTras, factorTemperatura, resumen, pctTrasMinutos, horasAC, minutosDC } from '../calc.js';
+import { esc, num, euros, anillo, temperatura, aviso, hora } from '../comun.js';
 import { abrirElegirCoche } from '../elegir-coche.js';
 
 let via = 'mixto';
@@ -9,7 +9,15 @@ let temp = null;
 
 export function pintar(raiz) {
   const b = bateria();
-  raiz.innerHTML = `
+  const s = sesion();
+  let viva = '';
+  if (s) {
+    const pct = Math.min(s.a, pctTrasMinutos(s.de, s.kw, s.ac, (Date.now() - s.inicio) / 60e3));
+    const fin = new Date(s.inicio + (s.ac ? horasAC(s.de, s.a, s.kw) * 60 : minutosDC(s.de, s.a, s.kw)) * 60e3);
+    viva = `<a class="carga-viva" href="#/cargar"><span class="latido"></span><span style="flex:1"><b>Cargando · ${Math.floor(pct)} %</b>
+      <span class="suave" style="font-size:14px">${pct >= s.a - 0.05 ? '¡Ya debería estar lista!' : `Al ${s.a} % sobre las ${hora(fin)}`}</span></span><span style="font-size:24px;color:var(--texto3)">›</span></a>`;
+  }
+  raiz.innerHTML = `${viva}
     <section class="tarjeta heroe">
       <div class="anillo" id="anillo">${anillo(b.pct)}<div class="anillo-centro"><b id="pct">${b.pct}<small>%</small></b><span>batería</span></div></div>
       <div class="km-grande">≈ <em id="km">—</em> km</div>
@@ -64,10 +72,10 @@ export function pintar(raiz) {
 
 function actualizar(raiz) {
   const pct = +raiz.querySelector('#desliza').value;
-  const c = consumo(via, temp, ajustes());
+  const c = consumo(via, temp, ajustes(), medido());
   raiz.querySelector('#km').textContent = num(kmCon(pct, c));
-  const propio = ajustes().consumoReal[via] > 0;
-  raiz.querySelector('#km-nota').textContent = `${num(c, 1)} kWh/100 km ${propio ? '(tu consumo)' : '(estimado; pon el tuyo en Ajustes)'} · hasta 0 %`;
+  const propio = ajustes().consumoReal[via] > 0, m = medido();
+  raiz.querySelector('#km-nota').textContent = `${num(c, 1)} kWh/100 km ${propio ? '(tu consumo)' : m ? `(medido con tus cargas en ${num(m.km)} km)` : '(estimado; se ajusta solo cuando apuntes cargas con los km)'} · hasta 0 %`;
   const f = factorTemperatura(temp);
   raiz.querySelector('#tiempo').textContent = temp == null ? '🌡️ sin datos del tiempo'
     : `🌡️ ${num(temp)} °C · ${f > 1 ? `−${Math.round((1 - 1 / f) * 100)} % de autonomía por el ${temp > 30 ? 'aire acondicionado' : 'frío'}` : 'temperatura ideal'}`;
@@ -141,7 +149,7 @@ function pintarMes(raiz) {
   const delMes = cargas().filter((c) => c.fecha.startsWith(mes));
   const r = resumen(delMes, ajustes());
   // Sin lecturas de km: km aproximados con lo cargado y el consumo mixto.
-  const km = r.kmHechos ?? (r.kwh * 0.92 / consumo('mixto', null, ajustes()) * 100);
+  const km = r.kmHechos ?? (r.kwh * 0.92 / consumo('mixto', null, ajustes(), medido()) * 100);
   const gasolina = km * r.gasolina100 / 100;
   const nombreMes = new Date().toLocaleDateString('es-ES', { month: 'long' });
   raiz.querySelector('#mes').innerHTML = `

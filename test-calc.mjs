@@ -66,3 +66,17 @@ assert.ok(pc.llegada >= 15);
 // Sin cargadores conocidos: parada teórica igual que antes.
 assert.equal(planConCargadores(620, 100, 21, []).paradas.length, 2);
 console.log('Planificador con cargadores ✔');
+
+// Consumo medido con las cargas; % durante una carga.
+import { consumoMedido, pctTrasMinutos } from './js/calc.js';
+const cm = consumoMedido([
+  { id: 'a', fecha: '2026-10-01', kwh: 40, km: 1000, lugar: 'casa' },
+  { id: 'b', fecha: '2026-10-05', kwh: 30, km: 1200, lugar: 'casa' },
+  { id: 'c', fecha: '2026-10-09', kwh: 30, km: 1400, lugar: 'casa' },
+]);
+assert.ok(Math.abs(cm.kwh100 - 13.5) < 0.01, JSON.stringify(cm));
+assert.equal(consumoMedido([{ fecha: '2026-10-01', kwh: 40, km: 1000 }, { fecha: '2026-10-02', kwh: 20, km: 1100 }]), null);
+assert.ok(Math.abs(consumo('mixto', 20, { consumoReal: {} }, { kwh100: 16 }) - 16) < 1e-9);
+assert.ok(Math.abs(pctTrasMinutos(30, 200, false, minutosDC(30, 80, 200)) - 80) < 0.5);
+assert.ok(Math.abs(pctTrasMinutos(20, 7.4, true, horasAC(20, 60, 7.4) * 60) - 60) < 0.5);
+console.log('Consumo medido y carga en curso ✔');

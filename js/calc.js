@@ -16,8 +16,10 @@ export function factorTemperatura(t) {
   return 1;
 }
 
-export function consumo(tipo, temp, ajustes) {
-  const propio = ajustes?.consumoReal?.[tipo];
+// Prioridad: lo que pusiste en Ajustes > lo medido con tus cargas (escalado por tipo de vía) > estimación.
+export function consumo(tipo, temp, ajustes, medido = null) {
+  const propio = ajustes?.consumoReal?.[tipo] > 0 ? +ajustes.consumoReal[tipo]
+    : medido ? medido.kwh100 * CONSUMO_TIPICO[tipo] / CONSUMO_TIPICO.mixto : null;
   const base = propio > 0 ? +propio : CONSUMO_TIPICO[tipo];
   // Si el consumo es tuyo (lo miraste en el coche), ya lleva el tiempo que hacía: solo se corrige el frío extremo.
   return propio > 0 ? base * Math.max(1, factorTemperatura(temp) - 0.08) : base * factorTemperatura(temp);
@@ -236,4 +238,37 @@ export function planConCargadores(km, pctIni, kwh100, cargadores, { llegarCon = 
     pos = kmParada; pct = hasta;
   }
   return { paradas, llegada: null, minutosCarga: paradas.reduce((s, p) => s + p.minutos, 0), imposible: true };
+}
+
+// Consumo medido con tus cargas: energía que entró en la batería entre dos lecturas de km.
+// Hace falta al menos 300 km apuntados para que no salga una cifra loca.
+export function consumoMedido(cargas) {
+  const conKm = cargas.filter((c) => +c.km > 0).sort((a, b) => a.km - b.km);
+  if (conKm.length < 2) return null;
+  const primera = conKm[0], ultima = conKm.at(-1);
+  const km = ultima.km - primera.km;
+  if (km < 300) return null;
+  const despues = cargas.filter((c) => c !== primera && c.fecha >= primera.fecha && c.fecha <= ultima.fecha && !(+c.km > 0 && +c.km <= primera.km));
+  const kwhBateria = despues.reduce((s, c) => s + (+c.kwh || 0) * (c.lugar === 'rapida' ? PERDIDAS_DC : PERDIDAS_AC), 0);
+  const v = kwhBateria / km * 100;
+  return v > 8 && v < 40 ? { kwh100: v, km } : null;
+}
+
+// Mientras carga: qué % lleva tras «min» minutos, empezando en «de», a «kw» (alterna o rápida).
+export function pctTrasMinutos(de, kw, ac, min) {
+  if (ac) return Math.min(100, de + min / 60 * Math.min(kw, COCHE.acMax) * PERDIDAS_AC / COCHE.util * 100);
+  let pct = de, t = 0;
+  while (pct < 100) {
+    const paso = 0.1;
+    const dt = (paso / 100 * COCHE.util) / (Math.min(kw, curvaDC(pct)) * 0.95) * 60;
+    if (t + dt > min) return pct + paso * (min - t) / dt;
+    t += dt; pct += paso;
+  }
+  return 100;
+}
+
+// CO2 evitado (kg): la gasolina que no quemas menos lo que contamina la luz que gastas.
+// 2,31 kg por litro de gasolina; red española ~0,1 kg por kWh (estimado, cambia cada año).
+export function co2Ahorrado(km, kwh, ajustes) {
+  return Math.max(0, km * ajustes.gasolinaL100 / 100 * 2.31 - kwh * 0.1);
 }

@@ -49,6 +49,7 @@ function leerOficial(xml) {
     const lat = +uno(b, /<loc:latitude>([^<]+)/), lon = +uno(b, /<loc:longitude>([^<]+)/);
     if (!lat || !lon || Math.abs(lat) > 90) continue;
     const nombre = uno(b, /<fac:name>\s*<com:values>\s*<com:value[^>]*>([^<]*)/);
+    if (/\bpruebas?\b|^test\b/i.test(nombre)) continue; // puntos de prueba de las empresas
     const operador = uno(b, /<fac:operator\b[\s\S]*?<com:value [^>]*>([^<]*)/);
     const dir = uno(b, /Dirección: ([^<]*)/), muni = uno(b, /Municipio: ([^<]*)/);
     let pago = 0;

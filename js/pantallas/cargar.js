@@ -1,25 +1,123 @@
-// Cargar: en casa (la hora más barata) y en la calle (cuánto tarda y cuánto cuesta).
-import { COCHE, CARGADORES_CASA, ajustes, bateria, cambiarAjuste } from '../datos.js';
-import { horasAC, kwhRedAC, kwhRedDC, minutosDC, ventanaBarata, costeAhora, preciosTarifa } from '../calc.js';
-import { esc, num, euros, hora, duracion, preciosPVPC, campo } from '../comun.js';
+// Cargar: en casa (la hora más barata), en la calle (cuánto tarda y cuánto cuesta) y
+// «Cargando ahora» (el % en directo, a qué hora acaba y lo que lleva gastado).
+import { COCHE, CARGADORES_CASA, ajustes, bateria, cambiarAjuste, sesion, empezarSesion, terminarSesion } from '../datos.js';
+import { horasAC, kwhRedAC, kwhRedDC, minutosDC, ventanaBarata, costeAhora, preciosTarifa, pctTrasMinutos, tramo } from '../calc.js';
+import { esc, num, euros, hora, duracion, preciosPVPC, campo, anillo, aviso } from '../comun.js';
 import { abrirFormCarga } from './diario.js';
 
-let modo = 'casa';
-let precios = null, errorPrecios = null;
+let modo = 'casa', reloj = null, deCargador = null;
+
+// Desde la ficha de un cargador del mapa: «Cargo aquí».
+export function cargarAqui(c) { deCargador = c; modo = 'ahora'; location.hash = '#/cargar'; }
+let precios = null, errorPrecios = null, preciosHora = 0;
 
 export function pintar(raiz) {
+  clearInterval(reloj);
+  if (sesion() && !pintar.visto) { modo = 'ahora'; pintar.visto = true; }
   raiz.innerHTML = `
     <div class="titulo-pantalla"><h1>Cargar</h1></div>
     <div class="segmento" id="modo">
-      <button data-m="casa" class="${modo === 'casa' ? 'activo' : ''}">🏠 En casa</button>
-      <button data-m="calle" class="${modo === 'calle' ? 'activo' : ''}">⚡ En la calle</button>
+      <button data-m="casa" class="${modo === 'casa' ? 'activo' : ''}">🏠 Casa</button>
+      <button data-m="calle" class="${modo === 'calle' ? 'activo' : ''}">⚡ Calle</button>
+      <button data-m="ahora" class="${modo === 'ahora' ? 'activo' : ''}">${sesion() ? '🟢' : '⏱️'} Ahora</button>
     </div>
     <div id="cuerpo"></div>`;
   raiz.querySelector('#modo').onclick = (e) => {
     const b = e.target.closest('[data-m]'); if (!b) return;
     modo = b.dataset.m; pintar(raiz);
   };
-  (modo === 'casa' ? casa : calle)(raiz.querySelector('#cuerpo'));
+  ({ casa, calle, ahora: (el) => ahora(el, raiz) })[modo](raiz.querySelector('#cuerpo'));
+}
+
+export function salir() { clearInterval(reloj); }
+
+/* ---------- Cargando ahora ---------- */
+function precioCasaAhora() {
+  const a = ajustes();
+  if (a.tarifa === 'fija') return +a.precioFijo;
+  if (a.tarifa === 'tramos') return +a.tramos[tramo(new Date())];
+  const p = precios?.find((x) => x.hora.getTime() <= Date.now() && x.hora.getTime() + 3600e3 > Date.now());
+  return p ? +p.eur.toFixed(3) : 0.15;
+}
+
+function ahora(el, raiz) {
+  const s = sesion();
+  if (!s) return empezar(el, raiz);
+  const pinta = () => {
+    const min = (Date.now() - s.inicio) / 60e3;
+    const pct = Math.min(s.a, pctTrasMinutos(s.de, s.kw, s.ac, min));
+    const kwh = s.ac ? kwhRedAC(s.de, pct) : kwhRedDC(s.de, pct);
+    const total = s.ac ? horasAC(s.de, s.a, s.kw) * 60 : minutosDC(s.de, s.a, s.kw);
+    const fin = new Date(s.inicio + total * 60e3);
+    const hecho = pct >= s.a - 0.05;
+    el.innerHTML = `
+      <section class="tarjeta heroe">
+        <div class="anillo">${anillo(pct)}<div class="anillo-centro"><b>${Math.floor(pct)}<small>%</small></b><span>${hecho ? '¡lista!' : 'cargando'}</span></div></div>
+        <div class="km-grande">${hecho ? 'Ya debería estar al ' + s.a + ' %' : `Al ${s.a} % sobre las <em>${hora(fin)}</em>`}</div>
+        <div class="muy-suave">${hecho ? 'Mira el coche y dale a «He terminado».' : `Faltan ${duracion(Math.max(0, total - min))} · ${esc(s.sitio || (s.lugar === 'casa' ? 'En casa' : 'En la calle'))} · ${num(s.kw, s.kw % 1 ? 1 : 0)} kW`}</div>
+        <div class="rejilla" style="margin-top:14px;text-align:left">
+          <div class="dato"><b>${duracion(min)}</b><span>enchufado</span></div>
+          <div class="dato"><b>${num(kwh, 1)} kWh</b><span>cargados</span></div>
+          <div class="dato verde"><b>${euros(kwh * s.precio)}</b><span>llevas gastado</span></div>
+          <div class="dato"><b>+${num(Math.max(0, (pct - s.de) / 100 * COCHE.util / COCHE.consumo.mixto * 100))} km</b><span>de autonomía</span></div>
+        </div>
+      </section>
+      <div class="botones">
+        <button class="boton" id="fin">He terminado · apuntar en Gastos</button>
+        <button class="boton peligro" id="cancelar">Cancelar (no apuntar nada)</button>
+      </div>
+      <p class="muy-suave" style="margin-top:10px">Es una estimación con la curva de carga típica de tu coche: el % de verdad es el que marca el coche${COCHE.app ? ` o la app ${esc(COCHE.app)}` : ''}. Al apuntarla puedes corregirlo.</p>`;
+    el.querySelector('#fin').onclick = () => {
+      terminarSesion(); clearInterval(reloj);
+      abrirFormCarga({ lugar: s.lugar, sitio: s.sitio, desde: s.de, hasta: Math.round(pct), kwh: kwh.toFixed(1), euros: (kwh * s.precio).toFixed(2), operador: s.operador, cargadorK: s.cargadorK });
+      pintar(raiz);
+    };
+    el.querySelector('#cancelar').onclick = () => { terminarSesion(); clearInterval(reloj); aviso('Carga cancelada'); pintar(raiz); };
+  };
+  pinta();
+  reloj = setInterval(() => { if (el.isConnected) pinta(); else clearInterval(reloj); }, 15000);
+}
+
+function empezar(el, raiz) {
+  const a = ajustes();
+  const pre = deCargador; deCargador = null;
+  let lugar = pre ? 'calle' : 'casa', kw = pre ? Math.min(pre.kw || 50, 400) : +a.cargadorCasa;
+  const dibuja = () => {
+    const casaSi = lugar === 'casa';
+    el.innerHTML = `
+      <section class="tarjeta">
+        <h2>Empiezo a cargar</h2>
+        <p class="suave">Te enseño el % en directo, a qué hora acaba y lo que llevas gastado. Al terminar se apunta sola en Gastos.</p>
+        <div class="segmento" id="donde" style="margin-top:12px">
+          <button data-l="casa" class="${casaSi ? 'activo' : ''}">🏠 En casa</button><button data-l="calle" class="${casaSi ? '' : 'activo'}">⚡ En la calle</button>
+        </div>
+        ${casaSi ? `<label class="campo"><span>Con qué cargas</span><select name="kw">${CARGADORES_CASA.map(([k, t]) => `<option value="${k}" ${k === kw ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`
+          : `<label class="campo"><span>Potencia del cargador (lo pone en el poste)</span><div class="chips" id="kws">${[...new Set([22, 50, 100, 150, 300, kw])].sort((x, y) => x - y).map((k) => `<button type="button" class="chip ${k === kw ? 'activo' : ''}" data-kw="${k}">${k} kW</button>`).join('')}</div></label>
+             ${campo('Sitio (opcional)', 'sitio', pre?.sitio || '', { tipo: 'text', extra: 'placeholder="Ej. Zunder Fraga"' })}`}
+        <div class="fila">${campo('Ahora tiene', 'de', bateria().pct, { unidad: '%' })}${campo('Hasta', 'a', casaSi ? a.objetivoCasa : 80, { unidad: '%' })}</div>
+        ${campo('Precio', 'precio', casaSi ? precioCasaAhora() : (kw <= 22 ? a.precioLenta : a.precioRapida), { unidad: '€/kWh' })}
+        <button class="boton" id="vamos">▶ Empezar</button>
+      </section>`;
+    el.querySelector('#donde').onclick = (e) => {
+      const b = e.target.closest('[data-l]'); if (!b) return;
+      lugar = b.dataset.l; kw = lugar === 'casa' ? +a.cargadorCasa : 150; dibuja();
+    };
+    el.querySelector('#kws')?.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-kw]'); if (!b) return;
+      kw = +b.dataset.kw;
+      el.querySelectorAll('#kws .chip').forEach((x) => x.classList.toggle('activo', x === b));
+      el.querySelector('[name=precio]').value = kw <= 22 ? a.precioLenta : a.precioRapida;
+    });
+    el.querySelector('#vamos').onclick = () => {
+      const v = (n) => el.querySelector(`[name=${n}]`)?.value;
+      const de = Math.max(0, Math.min(99, +v('de'))), hasta = Math.max(de + 1, Math.min(100, +v('a')));
+      if (lugar === 'casa') kw = +v('kw');
+      const ac = lugar === 'casa' || kw <= 22;
+      empezarSesion({ de, a: hasta, kw, ac, precio: +v('precio') || 0, lugar: lugar === 'casa' ? 'casa' : ac ? 'lenta' : 'rapida', sitio: v('sitio') || '', operador: pre?.operador || '', cargadorK: pre?.cargadorK || '' });
+      pintar(raiz);
+    };
+  };
+  dibuja();
 }
 
 /* ---------- En casa ---------- */
@@ -49,8 +147,9 @@ function casa(el) {
     if (e.target.name === 'a' && e.type === 'change') cambiarAjuste('objetivoCasa', +e.target.value);
     resultadoCasa(el.querySelector('#res'), leer());
   };
-  if (a.tarifa === 'pvpc' && !precios) {
-    preciosPVPC().then((p) => { precios = p; errorPrecios = null; }).catch((e) => { errorPrecios = e.message; })
+  // Se vuelven a pedir cada media hora (a las 20:30 salen los de mañana; y al cambiar de día).
+  if (a.tarifa === 'pvpc' && (!precios || Date.now() - preciosHora > 30 * 60e3)) {
+    preciosPVPC().then((p) => { precios = p; preciosHora = Date.now(); errorPrecios = null; }).catch((e) => { errorPrecios = e.message; })
       .finally(() => { if (el.isConnected) resultadoCasa(el.querySelector('#res'), leer()); });
   }
   resultadoCasa(el.querySelector('#res'), leer());
@@ -138,7 +237,7 @@ function calle(el) {
   el.innerHTML = `
     <section class="tarjeta">
       <label class="campo"><span>Potencia del cargador (lo pone en el poste)</span>
-        <div class="chips" id="kws">${[22, 50, 100, 150, 300].map((k) => `<button class="chip ${k === kwCalle ? 'activo' : ''}" data-kw="${k}">${k} kW</button>`).join('')}</div></label>
+        <div class="chips" id="kws">${[...new Set([22, 50, 100, 150, 300, kw])].sort((x, y) => x - y).map((k) => `<button class="chip ${k === kwCalle ? 'activo' : ''}" data-kw="${k}">${k} kW</button>`).join('')}</div></label>
       <div class="fila">
         ${campo('Ahora tiene', 'de', bateria().pct, { unidad: '%' })}
         ${campo('Cargar hasta', 'a', 80, { unidad: '%' })}

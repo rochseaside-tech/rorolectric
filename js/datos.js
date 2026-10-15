@@ -1,4 +1,5 @@
 // datos.js — fichas de los coches y lo que se guarda en el móvil.
+import { consumoMedido } from './calc.js';
 // Deepal S05: catálogo oficial Changan España (julio 2026).
 // Tesla Model Y: bases de datos de coches eléctricos (EVKX, InsideEVs); batería útil y curvas, aproximadas.
 // Todo lo marcado «estimado» es cálculo nuestro, no dato del fabricante.
@@ -122,7 +123,8 @@ function leer() {
     bateria: guardado.bateria || { pct: 80, fecha: null },
     cargas: guardado.cargas || [],
     hechos: guardado.hechos || {},   // recordatorios marcados: { neumaticos: '2026-10-15' }
-    notas: guardado.notas || {},     // por cargador: { '41.5568,2.1022': { fav, nota, estado, fecha, nombre } }
+    notas: guardado.notas || {},
+    sesion: guardado.sesion || null, // carga en curso: { inicio, de, a, kw, ac, precio, lugar, sitio }     // por cargador: { '41.5568,2.1022': { fav, nota, estado, fecha, nombre } }
   };
 }
 
@@ -160,6 +162,18 @@ export function guardarCarga(c) {
 export function borrarCarga(id) { estado.cargas = estado.cargas.filter((x) => x.id !== id); guardar(); }
 
 export const hechos = () => estado.hechos;
+
+// Carga en curso («Estoy cargando»).
+export const sesion = () => estado.sesion;
+export function empezarSesion(s) { estado.sesion = { ...s, inicio: Date.now() }; guardar(); }
+export function terminarSesion() { estado.sesion = null; guardar(); }
+
+// Consumo medido con tus cargas (se recalcula solo cuando cambian).
+let medidoCache = { n: -1, v: null };
+export function medido() {
+  if (medidoCache.n !== estado.cargas.length) medidoCache = { n: estado.cargas.length, v: consumoMedido(estado.cargas) };
+  return medidoCache.v;
+}
 export function marcarHecho(clave) { estado.hechos[clave] = hoyISO(); guardar(); }
 
 // Notas y favoritos de cada cargador (la clave es su posición, que no cambia al rehacer la lista).

@@ -192,7 +192,7 @@ table.ficha td:last-child { text-align: right; color: var(--texto); font-weight:
 
 /* Mapa */
 .mapa-envoltorio { position: relative; margin: 0 -16px; }
-#mapa, .mapa { height: calc(100dvh - 58px - 84px - 112px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); min-height: 320px; background: var(--tarjeta2); }
+#mapa, .mapa { height: calc(100dvh - 58px - 84px - 166px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); min-height: 320px; background: var(--tarjeta2); }
 .mapa.bajo { height: 300px; border-radius: var(--radio); margin-bottom: 14px; }
 .mapa-botones { position: absolute; right: 12px; bottom: 16px; z-index: 500; display: grid; gap: 8px; }
 .mapa-botones button { width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--tarjeta); color: var(--texto); box-shadow: var(--sombra); font-size: 20px; cursor: pointer; }
@@ -213,7 +213,16 @@ table.ficha td:last-child { text-align: right; color: var(--texto); font-weight:
 .leaflet-popup-content .chip { padding: 4px 9px; font-size: 12px; cursor: default; }
 .leaflet-container a.leaflet-popup-close-button { color: var(--texto3); }
 .leaflet-control-attribution { font-size: 10px; }
-:root:not([data-tema="claro"]) .leaflet-tile-pane { filter: brightness(.72) contrast(1.1) saturate(.6); }
+.mapa-oscuro { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.7); }
+.mapa-busca { display: flex; gap: 8px; margin: 6px 0 10px; }
+.mapa-busca input { flex: 1; border-radius: 999px !important; padding: 10px 16px !important; }
+.mapa-busca button { flex: none; }
+.rango-etiqueta { background: var(--tarjeta); color: var(--texto); padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; box-shadow: var(--sombra); }
+.carga-viva { display: flex; gap: 12px; align-items: center; padding: 14px 16px; border-radius: var(--radio); margin-bottom: 14px; text-decoration: none; color: var(--texto);
+  background: color-mix(in srgb, var(--acento) 14%, var(--tarjeta)); border: 1px solid color-mix(in srgb, var(--acento) 40%, transparent); }
+.carga-viva b { font-size: 18px; display: block; }
+.latido { width: 12px; height: 12px; border-radius: 50%; background: var(--acento); animation: latido 1.4s infinite; flex: none; }
+@keyframes latido { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--acento) 60%, transparent); } 50% { box-shadow: 0 0 0 8px transparent; } }
 
 /* Hoja inferior y aviso */
 .hoja { position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.5); display: flex; align-items: flex-end; }
