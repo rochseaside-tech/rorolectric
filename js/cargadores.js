@@ -5,7 +5,7 @@
 import { esc, num, abrirHoja, cerrarHoja, aviso, fechaBonita } from './comun.js';
 import { distancia } from './calc.js';
 import { COCHE, claveCargador, notaDe, guardarNota, cargas, bateria } from './datos.js';
-import { operadorDe, enlaceApp, esIphone } from './operadores.js';
+import { operadorDe, enlaceApp, enlacePago, esIphone, COMODINES } from './operadores.js';
 import { abrirFormCarga } from './pantallas/diario.js';
 
 const ENCHUFES = { C: 'CCS', T: 'Tipo 2', H: 'CHAdeMO', S: 'Schuko', X: 'Tesla', J: 'Tipo 1', I: 'Industrial' };
@@ -183,10 +183,12 @@ function bloquePago(c) {
   else if (c.rapido) filas.push('💳 Si el poste tiene lector o código QR, paga con tarjeta sin app');
   if (op) filas.push(`📱 App de ${esc(op.nombre)}: <a href="${enlaceApp(op.app)}">${esc(op.app)}</a>${op.nota ? `<br><span class="muy-suave">${esc(op.nota)}</span>` : ''}`);
   else if (c.pago.includes('App')) filas.push('📱 Con la app de la empresa');
-  if (!c.gratis) filas.push(`🔑 Plan B: <a href="${enlaceApp('Electromaps')}">Electromaps</a> o <a href="${enlaceApp('Chargemap')}">Chargemap</a> suelen valer`);
   const precio = ultimoPrecio(c, op);
   if (precio) filas.push(`🧾 ${precio}`);
-  return `<div style="margin-top:8px;padding:10px;border-radius:10px;background:var(--tarjeta2);font-size:13px;line-height:1.5"><b style="display:block;margin-bottom:2px">Cómo pagar aquí</b>${filas.join('<br>')}</div>`;
+  // Pagar con una app comodín: valen en cargadores de muchísimas empresas.
+  const botones = c.gratis ? '' : `<div style="margin-top:8px"><span class="muy-suave">Pagar con una app que vale casi en todos:</span>
+    <div class="fila" style="margin-top:6px">${COMODINES.map((x) => `<a class="boton mini" href="${enlacePago(x.id)}" target="_blank" rel="noopener" style="background:var(--tarjeta);color:var(--texto);border:1px solid var(--borde)">🔑 ${x.nombre}</a>`).join('')}</div></div>`;
+  return `<div style="margin-top:8px;padding:10px;border-radius:10px;background:var(--tarjeta2);font-size:13px;line-height:1.5"><b style="display:block;margin-bottom:2px">Cómo pagar aquí</b>${filas.join('<br>')}${botones}</div>`;
 }
 
 // Lo que pagaste la última vez aquí o en esta empresa (de tus Gastos).

@@ -31,9 +31,14 @@ export const OPERADORES = [
 ];
 
 // Las dos que valen para casi todo (pagan en cargadores de muchas empresas).
+// Para abrirlas desde un cargador: Chargemap tiene enlaces que abren su app (chargemap.com/.well-known);
+// Electromaps no, así que en iPhone se abre su ficha de la App Store (con «Abrir» si ya la tienes).
+// En Android se abre la app por su paquete y, si no está, Google Play.
 export const COMODINES = [
-  { nombre: 'Electromaps', app: 'Electromaps', que: 'Paga en miles de cargadores de muchas empresas y enseña si están libres.' },
-  { nombre: 'Chargemap', app: 'Chargemap', que: 'Igual: una cuenta y un llavero para muchísimas empresas, también en Europa.' },
+  { id: 'electromaps', nombre: 'Electromaps', app: 'Electromaps', que: 'Paga en miles de cargadores de muchas empresas y enseña si están libres.',
+    iosId: '606186464', android: 'com.enredats.electromaps', web: 'https://map.electromaps.com/' },
+  { id: 'chargemap', nombre: 'Chargemap', app: 'Chargemap', que: 'Igual: una cuenta y un llavero para muchísimas empresas, también en Europa.',
+    iosId: '438176982', android: 'com.chargemap_beta.android', web: 'https://chargemap.com/es-es/map', abreApp: true },
 ];
 
 export const operadorDe = (...textos) => OPERADORES.find((o) => textos.some((t) => o.re.test(t || ''))) || null;
@@ -42,6 +47,16 @@ export const operadorDe = (...textos) => OPERADORES.find((o) => textos.some((t) 
 export const esAndroid = () => /android/i.test(navigator.userAgent);
 export const esIphone = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 export const nombreTienda = () => (esAndroid() ? 'Google Play' : 'App Store');
+export function enlacePago(id) {
+  const c = COMODINES.find((x) => x.id === id);
+  if (esAndroid()) {
+    const tienda = `https://play.google.com/store/apps/details?id=${c.android}`;
+    return `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${c.android};S.browser_fallback_url=${encodeURIComponent(tienda)};end`;
+  }
+  if (esIphone()) return c.abreApp ? c.web : `itms-apps://apps.apple.com/app/id${c.iosId}`;
+  return c.web;
+}
+
 export function enlaceApp(app) {
   if (esAndroid()) return `https://play.google.com/store/search?q=${encodeURIComponent(app)}&c=apps`;
   if (esIphone()) return `itms-apps://search.itunes.apple.com/WebObjects/MZSearch.woa/wa/search?media=software&term=${encodeURIComponent(app)}`;

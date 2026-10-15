@@ -28,7 +28,7 @@ export function pintar(raiz) {
       <ol>
         <li><b>Tarjeta en el poste.</b> Desde abril de 2024, todo cargador rápido nuevo de 50 kW o más tiene que dejar pagar con tarjeta sin registrarte ${certeza('alta')}. Muchos antiguos también lo tienen.</li>
         <li><b>Código QR del poste</b>: te abre una web para pagar con tarjeta. Sin descargar nada.</li>
-        <li><b>Una app comodín</b> por si acaso: ${COMODINES.map((c) => `<a href="${enlaceApp(c.app)}">${c.nombre}</a>`).join(' o ')}. Valen en cargadores de muchísimas empresas ${certeza('media')}.</li>
+        <li><b>Una app comodín</b> por si acaso: ${COMODINES.map((c) => `<a href="${enlaceApp(c.app)}">${c.nombre}</a>`).join(' o ')}. Valen en cargadores de muchísimas empresas ${certeza('media')}. Instala <b>una</b>, regístrate y pon tu tarjeta en casa con calma: luego, en cada cargador del mapa, el botón «🔑 ${COMODINES[0].nombre}» o «🔑 ${COMODINES[1].nombre}» te lleva a ella.</li>
         <li>Solo si un cargador concreto que usas mucho no deja nada de eso, te bajas la app de esa empresa. En cada cargador del mapa te digo cuál es.</li>
       </ol>
       <p class="muy-suave">Lo que ninguna app gratuita «todo en uno» puede hacer: arrancar la carga en los postes de todas las empresas. Cada empresa tiene su sistema cerrado. Por eso lo práctico es tarjeta o QR, más un comodín.</p>`, true)}
