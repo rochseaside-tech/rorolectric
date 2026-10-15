@@ -1,7 +1,8 @@
 # Publica la app en GitHub Pages y, de paso, rehace la lista con TODOS los puntos de recarga
 # de España (registro oficial del Ministerio + OpenStreetMap + precios de REVE). Corre sola cada noche y con cada
 # cambio del código: nadie tiene que hacer nada para que la lista esté al día.
-# Modo «averias» (lo lanza «Precios REVE» cada hora): no rehace la lista, solo publica las averías de la última hora.
+# Modo «averias» (lo lanza «Precios REVE» cada hora): no rehace la lista, solo publica el estado de la última hora:
+# averías de España (REVE) y libres/ocupados/rotos de Francia y Portugal (scripts/ahora.mjs).
 name: Publicar
 on:
   push:
@@ -15,7 +16,7 @@ on:
         default: completo
 permissions:
   contents: read
-  actions: read
+  actions: write
   pages: write
   id-token: write
 concurrency:
@@ -43,17 +44,32 @@ jobs:
           path: ~/reve-datos
           key: reve-publicar-${{ github.run_id }}
           restore-keys: reve-
+      - name: Recuperar el mapa de puntos de anoche (Francia y Portugal)
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/mapas
+          key: mapas-${{ github.run_id }}
+          restore-keys: mapas-
       - name: Juntar todos los cargadores
         if: env.SOLO_AVERIAS != 'true'
         run: REVE_DIR="$HOME/reve-datos" node scripts/cargadores.mjs || echo "::warning::No se pudo rehacer la lista hoy; se publica la anterior"
       - name: Cargadores de Francia, Portugal y Andorra
         if: env.SOLO_AVERIAS != 'true'
-        run: node scripts/fuera.mjs || node scripts/fuera.mjs --copiar-publicado || echo "::warning::Hoy no hay cargadores de fuera de España"
+        run: MAPAS_DIR="$HOME/mapas" node scripts/fuera.mjs || node scripts/fuera.mjs --copiar-publicado || echo "::warning::Hoy no hay cargadores de fuera de España"
+      - name: Guardar el mapa de puntos para las publicaciones de cada hora
+        if: env.SOLO_AVERIAS != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ~/mapas
+          key: mapas-${{ github.run_id }}
       - name: Cargadores de fuera, tal cual están publicados
         if: env.SOLO_AVERIAS == 'true'
         run: node scripts/fuera.mjs --copiar-publicado || echo "::warning::No se pudieron copiar los de fuera"
       - name: Averías de ahora (REVE)
         run: REVE_DIR="$HOME/reve-datos" node scripts/estado-reve.mjs || echo "::warning::Sin averías de REVE"
+      - name: Francia y Portugal, libres y rotos ahora
+        run: MAPAS_DIR="$HOME/mapas" node scripts/ahora.mjs || echo "::warning::Sin estado de Francia y Portugal"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .

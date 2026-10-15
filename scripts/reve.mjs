@@ -175,6 +175,7 @@ for (let h = 0; h < HORAS; h++) {
   await esperarA(horaSiguiente());
 }
 if (process.env.GITHUB_OUTPUT) {
-  // averias=si → publicar solo el estado (rápido); publicar=si → rehacer la lista entera.
-  await writeFile(process.env.GITHUB_OUTPUT, `publicar=${publicar ? 'si' : 'no'}\naverias=${averias && !publicar ? 'si' : 'no'}\nseguir=si\n`, { flag: 'a' });
+  // Cada hora se publica el estado (averías de España y libres/rotos de Francia y Portugal, rápido);
+  // publicar=si → rehacer la lista entera (al acabar una vuelta completa de REVE).
+  await writeFile(process.env.GITHUB_OUTPUT, `publicar=${publicar ? 'si' : 'no'}\naverias=${publicar ? 'no' : 'si'}\nseguir=si\n`, { flag: 'a' });
 }

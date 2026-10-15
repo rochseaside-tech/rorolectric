@@ -104,6 +104,11 @@ function abrirLista(orden = 'cerca') {
     <div class="botones"><button class="boton sec" data-cerrar>Cerrar</button></div>`, (caja) => {
     caja.querySelector('#orden')?.addEventListener('click', (e) => { const b = e.target.closest('[data-o]'); if (b && b.dataset.o !== orden) { cerrarHoja(); abrirLista(b.dataset.o); } });
     // Si están libres ahora, para los 5 primeros de la lista que lo publican (una sola pregunta).
+    for (const { c } of lista) {
+      const txt = c.ahora && textoAhora(c.ahora);
+      const li = txt && caja.querySelector(`[data-k="${claveCargador(c)}"] .cuerpo`);
+      if (li) li.insertAdjacentHTML('beforeend', `<span style="display:block;font-weight:700;color:${c.ahora.libres ? 'var(--acento)' : c.ahora.cargando ? 'var(--ambar)' : 'var(--rojo)'}">${txt}</span>`);
+    }
     const conReve = lista.map(({ c }) => c).filter((c) => c.reves?.length).slice(0, 5);
     if (conReve.length) estadoAhora(conReve.map((c) => c.reves[0])).then((datos) => {
       for (const c of conReve) {

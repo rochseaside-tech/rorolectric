@@ -106,6 +106,7 @@ function juntar(oficiales, osm) {
       m.pago |= o.pago & (GRATIS | SIN_REGISTRO | CLIENTES | TARJETA);
       if (!Object.keys(m.enchufes).length) m.enchufes = o.enchufes;
       if (!m.horario && o.horario) m.horario = o.horario;
+      if (!m.precio && o.precio) { m.precio = o.precio; m.tarifa = o.tarifa; m.precioOsm = true; } // hasta que llegue el de REVE
       for (const x of o.servicios) m.servicios.add(x);
       m.fuente = 'mo'; completados++;
       continue;
@@ -169,6 +170,7 @@ async function juntarReve(sitios, rejilla) {
     const m = cerca.find(misma) || cerca.find((o) => !o.reve && metros(s, o) <= 40);
     if (m) {
       if (m.reve && m.reve !== id) (m.reveOtros ||= []).push(id); // varios de REVE en el mismo sitio
+      if (precio && m.precioOsm) { m.precio = null; m.tarifa = ''; m.precioOsm = false; } // manda el oficial
       m.reve ||= id; m.precio = mezclarPrecio(m.precio, precio);
       if (funcion) m.funcion = m.funcion ? [m.funcion[0] + funcion[0], m.funcion[1] + funcion[1]] : funcion;
       if (x.tarjeta) m.pago |= TARJETA;

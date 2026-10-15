@@ -1,11 +1,15 @@
 // Cargadores de los países vecinos, para viajes y para cuando se cruza la frontera:
 //  - Francia: registro oficial (Base nationale des IRVE, data.gouv.fr; obligatorio, se rehace cada día).
 //    Trae además si se paga con tarjeta, si es gratis, si se puede RESERVAR y, a veces, el precio.
-//  - Portugal y Andorra: OpenStreetMap (no publican un registro abierto).
+//  - Portugal: registro oficial de MOBI.E (portugal.mjs), con el precio y el estado de cada punto.
+//  - Andorra: OpenStreetMap, con la tarifa pública del país (la misma en toda la red de las distribuidoras).
+// Cada sitio de Francia y Portugal lleva un id («fr:…», «pt:…») para ponerle cada hora si está libre o roto
+// (scripts/ahora.mjs); el mapa de qué punto es de qué sitio se deja en MAPAS_DIR para eso.
 // Se parte en teselas de 2° × 2° (datos/fuera/LAT_LON.json): el móvil solo baja las de la zona que mira.
 // Si una fuente falla, se reutiliza lo publicado ayer de esa fuente. Uso: node scripts/fuera.mjs [csv-local]
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
-import { TARJETA, GRATIS, SIN_REGISTRO, CLIENTES, RESERVABLE, leerOsm, descargarOsm, clave, vecinos, sumarEnchufes, aFila } from './comun.mjs';
+import { URL_PT, URL_PT_ESTADO, leerPortugal, leerEstadoPt } from './portugal.mjs';
+import { TARJETA, GRATIS, SIN_REGISTRO, CLIENTES, RESERVABLE, leerOsm, descargarOsm, clave, vecinos, sumarEnchufes, aFila, precioTexto } from './comun.mjs';
 
 const URL_FR = 'https://www.data.gouv.fr/fr/datasets/r/eb76d20a-8501-400e-b336-d85724de5435';
 const PUBLICADO = 'https://rochseaside-tech.github.io/rorolectric/datos/fuera/';
@@ -34,47 +38,6 @@ function* leerCsv(txt) {
 
 const si = (v) => /^(true|1|oui|vrai)$/i.test((v || '').trim());
 const recortar = (t, n = 140) => (t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t);
-
-// El precio en número, sacado del texto libre de «tarification», en el formato de REVE:
-// [rápida €/kWh mín, máx, normal mín, máx, €/hora cargando, € fijos, €/hora de plaza, desde el minuto].
-// Entiende «0,29€ / kWh», «49 cts/kWh», «HPC 49cts/Kwh», «AC 36cts/KWh», «0,30 € HT / kWh» (+20 % de IVA),
-// «0,025€ / min», «9€ + 0,49€/kWh», «… 1,5€ par heure d'occupation» y el JSON {"energyPrice":…}.
-export function precioFr(texto, rapido) {
-  let t = String(texto || '').trim();
-  if (!t || /^https?:/i.test(t)) return null;
-  const r2 = (x) => Math.round(x * 100) / 100;
-  let kwhR = [], kwhN = [], hora = 0, fijo = 0, plaza = 0;
-  const pon = (v, etiqueta) => {
-    if (!(v >= 0.05 && v <= 1.5)) return;
-    const dc = /hpc|dc|rapide|ccs|combo|chademo/i.test(etiqueta || ''), ac = /\bac\b|normale|lente|t2|type ?2/i.test(etiqueta || '');
-    (dc || (!ac && rapido) ? kwhR : kwhN).push(v);
-  };
-  if (t.startsWith('{')) {
-    try {
-      const j = JSON.parse(t);
-      pon(+j.energyPrice); fijo = +j.fixedPrice || 0; if (+j.timePrice) hora = +j.timePrice * 60;
-    } catch { return null; }
-  } else {
-    const l = t.toLowerCase().replace(/(\d),(\d)/g, '$1.$2');
-    const ht = /\bht\b/.test(l) && !/\bttc\b/.test(l) ? 1.2 : 1; // sin IVA → con el 20 % francés
-    // Cada trozo separado por «;», «|», « - » o salto de línea puede llevar su etiqueta (AC, HPC…)
-    for (const trozo of l.split(/[;|\n]| - /)) {
-      for (const m of trozo.matchAll(/(\d+(?:\.\d+)?)\s*(?:€|e|eur|euros?)\s*(?:ttc|ht)?\s*(?:\/|par|le|de)?\s*kwh/g)) pon(+m[1] * ht, trozo.slice(0, m.index));
-      for (const m of trozo.matchAll(/(\d+(?:\.\d+)?)\s*(?:cts?|centimes?|c€|cents?)\s*(?:ttc|ht)?\s*(?:\/|par|le|de)?\s*kwh/g)) pon(+m[1] / 100 * ht, trozo.slice(0, m.index));
-      for (const m of trozo.matchAll(/(\d+(?:\.\d+)?)\s*(?:€|e|eur|euros?)\s*(?:ttc|ht)?\s*(?:\/|par|la|le)\s*(?:min|minute)/g)) {
-        if (/occup|stationn|parking|apr[eè]s/.test(trozo)) plaza = Math.max(plaza, +m[1] * 60 * ht); else hora = Math.max(hora, +m[1] * 60 * ht);
-      }
-      for (const m of trozo.matchAll(/(\d+(?:\.\d+)?)\s*(?:€|e|eur|euros?)\s*(?:ttc|ht)?\s*(?:\/|par)\s*(?:h|heure)\b/g)) {
-        if (/occup|stationn|parking|branch|apr[eè]s/.test(trozo)) plaza = Math.max(plaza, +m[1] * ht);
-      }
-      const f = trozo.match(/(\d+(?:\.\d+)?)\s*€\s*(?:ttc|ht)?\s*\+/); // «9€ + 0,49€/kWh»: 9 € por sesión
-      if (f && +f[1] <= 15) fijo = Math.max(fijo, +f[1] * ht);
-    }
-  }
-  if (!kwhR.length && !kwhN.length && !hora) return null;
-  return [kwhR.length ? r2(Math.min(...kwhR)) : null, kwhR.length ? r2(Math.max(...kwhR)) : null,
-    kwhN.length ? r2(Math.min(...kwhN)) : null, kwhN.length ? r2(Math.max(...kwhN)) : null, r2(hora), r2(fijo), r2(plaza), 0];
-}
 
 // «tarification» es texto libre; algunos lo ponen en JSON ({"energyPrice":0.51,…}).
 function tarifaFr(t) {
@@ -106,14 +69,16 @@ function leerFrancia(txt) {
     const la = +v(f, 'consolidated_latitude'), lo = +v(f, 'consolidated_longitude');
     if (!la || !lo || la < 41 || la > 51.6 || lo < -5.6 || lo > 10) continue; // solo la Francia europea (y Córcega)
     const id = v(f, 'id_station_itinerance') || `${la.toFixed(4)},${lo.toFixed(4)}`;
+    const pdc = v(f, 'id_pdc_itinerance');
     let e = estaciones.get(id);
     if (!e) {
       e = { lat: la, lon: lo, nombre: v(f, 'nom_station').replace(/[\s/_-]*[0-9a-f]{8}-[0-9a-f-]{20,}/i, '').trim(), operador: v(f, 'nom_enseigne') || v(f, 'nom_operateur') || v(f, 'nom_amenageur'),
         dir: [v(f, 'adresse_station').replace(/,?\s*\b\d{5}\b.*$/, '').replace(/(\s*,)+\s*$/, '').replace(/\s*,\s*,/g, ','), v(f, 'consolidated_commune')].filter(Boolean).join(', '),
-        horario: '', pago: 0, enchufes: {}, puntos: 0, servicios: new Set(), fuente: 'f', tarifa: '' };
+        horario: '', pago: 0, enchufes: {}, puntos: 0, servicios: new Set(), fuente: 'f', tarifa: '', ext: `fr:${id}`, idsPuntos: [] };
       estaciones.set(id, e);
     }
     e.puntos++;
+    if (pdc) e.idsPuntos.push(pdc);
     let kw = +v(f, 'puissance_nominale').replace(',', '.') || 0;
     if (kw >= 1000) kw /= 1000; // alguno lo pone en W
     kw = Math.round(kw);
@@ -137,7 +102,7 @@ function leerFrancia(txt) {
   for (const s of estaciones.values()) {
     const igual = vecinos(rejilla, s, 40).find((o) => o.operador === s.operador);
     if (igual) {
-      sumarEnchufes(igual.enchufes, s.enchufes); igual.puntos += s.puntos; igual.pago |= s.pago;
+      sumarEnchufes(igual.enchufes, s.enchufes); igual.puntos += s.puntos; igual.pago |= s.pago; igual.idsPuntos.push(...s.idsPuntos);
       if (!igual.tarifa) { igual.tarifa = s.tarifa; igual.tarifaCruda = s.tarifaCruda; }
       continue;
     }
@@ -147,7 +112,7 @@ function leerFrancia(txt) {
   // El precio en número (para colores del mapa, «más baratos» y el coste del viaje).
   for (const s of sitios) {
     const rapido = Object.entries(s.enchufes).some(([t, e]) => 'CH'.includes(t) && e.kw >= 50);
-    s.precio = precioFr(s.tarifaCruda, rapido);
+    s.precio = precioTexto(s.tarifaCruda, rapido);
     delete s.tarifaCruda;
   }
   return sitios;
@@ -177,24 +142,56 @@ if (process.argv[2] === '--copiar-publicado') {
   process.exit(0);
 }
 
-const filas = [], cuantos = {};
+// Andorra: la red pública (FEDA y las demás distribuidoras, de acuerdo entre ellas) cobra por minuto.
+// Desde enero de 2026: carga acelerada 0,28 €/min con un máximo de 42 € por carga; la rápida, 15,63 €/h (2024).
+function tarifaAndorra(s) {
+  if (s.precio || s.pago & GRATIS) return;
+  const rapido = Object.entries(s.enchufes).some(([t, e]) => 'CH'.includes(t) && e.kw >= 50) || s.kwSitio >= 50;
+  if (!s.kwSitio && !Object.keys(s.enchufes).length) s.kwSitio = rapido ? 50 : 22;
+  s.precio = [null, null, null, null, rapido ? 15.63 : 16.8, 0, 0, 0];
+  s.tarifa = rapido ? 'Red pública de Andorra: carga rápida unos 15,63 €/hora (IGI incluido)' : 'Red pública de Andorra: 0,28 €/minuto (como mucho 42 € por carga), desde enero de 2026';
+}
+
+const filas = [], cuantos = {}, conIds = [];
 try {
   const local = process.argv[2];
   const txt = local ? await readFile(local, 'utf8') : await (await fetch(URL_FR)).text();
   const fr = leerFrancia(txt);
   if (fr.length < 10000) throw new Error(`Francia trae muy pocos (${fr.length})`);
-  filas.push(...fr.map(aFila)); cuantos.francia = fr.length;
+  // Los que no publican precio en el registro: el que hayan apuntado otros conductores en OpenStreetMap (< 60 m)
+  try {
+    const osm = leerOsm(await descargarOsm('con-precio', 'FR')).filter((o) => o.precio);
+    const rejilla = new Map();
+    for (const s of fr) { const k = clave(s.lat, s.lon); (rejilla.get(k) || rejilla.set(k, []).get(k)).push(s); }
+    let puestos = 0;
+    for (const o of osm) {
+      const s = vecinos(rejilla, o, 60).find((x) => !x.precio);
+      if (s) { s.precio = o.precio; s.tarifa = `OpenStreetMap: ${o.tarifa}`; puestos++; }
+    }
+    console.log(`Francia: ${puestos} precios más sacados de OpenStreetMap`);
+  } catch (e) { console.warn('Precios de Francia en OpenStreetMap:', e.message); }
+  conIds.push(...fr); filas.push(...fr.map(aFila)); cuantos.francia = fr.length;
 } catch (e) {
   console.warn('Francia:', e.message);
   const ayer = await publicadoAyer('f'); filas.push(...ayer); cuantos.francia = ayer.length;
 }
 try {
-  const osm = leerOsm(await descargarOsm('PT', 'AD'));
-  if (osm.length < 1000) throw new Error(`OpenStreetMap trae muy pocos (${osm.length})`);
-  filas.push(...osm.map(aFila)); cuantos.portugalAndorra = osm.length;
+  const [infra, estado] = await Promise.all([URL_PT, URL_PT_ESTADO].map(async (u) => { const r = await fetch(u); if (!r.ok) throw new Error(`MOBI.E ${r.status}`); return r.text(); }));
+  const pt = leerPortugal(infra, leerEstadoPt(estado));
+  if (pt.length < 3000) throw new Error(`Portugal trae muy pocos (${pt.length})`);
+  conIds.push(...pt); filas.push(...pt.map(aFila)); cuantos.portugal = pt.length;
 } catch (e) {
-  console.warn('Portugal y Andorra:', e.message);
-  const ayer = await publicadoAyer('o'); filas.push(...ayer); cuantos.portugalAndorra = ayer.length;
+  console.warn('Portugal:', e.message);
+  const ayer = await publicadoAyer('p'); filas.push(...ayer); cuantos.portugal = ayer.length;
+}
+try {
+  const ad = leerOsm(await descargarOsm('AD'));
+  if (ad.length < 3) throw new Error(`OpenStreetMap trae muy pocos de Andorra (${ad.length})`);
+  for (const s of ad) tarifaAndorra(s);
+  filas.push(...ad.map(aFila)); cuantos.andorra = ad.length;
+} catch (e) {
+  console.warn('Andorra:', e.message);
+  const ayer = await publicadoAyer('o'); filas.push(...ayer); cuantos.andorra = ayer.length;
 }
 if (filas.length < 5000) throw new Error(`Muy pocos cargadores de fuera (${filas.length}); no se toca lo publicado`);
 
@@ -206,3 +203,16 @@ for (const [t, d] of teselas) await writeFile(new URL(`${t}.json`, DIR), JSON.st
 const fecha = new Date().toISOString().slice(0, 10);
 await writeFile(new URL('indice.json', DIR), JSON.stringify({ fecha, tamTesela: TESELA, cuantos, teselas: Object.fromEntries([...teselas].map(([t, d]) => [t, d.length])) }));
 console.log(`Fuera de España: ${filas.length} sitios en ${teselas.size} teselas`, cuantos);
+
+// Para scripts/ahora.mjs (cada hora): de qué sitio es cada punto de Francia y en qué tesela está cada sitio.
+if (process.env.MAPAS_DIR) {
+  const fr = {}, pt = {}, tesela = {};
+  for (const s of conIds) {
+    tesela[s.ext] = teselaDe(s.lat, s.lon);
+    if (s.ext.startsWith('fr:')) for (const p of s.idsPuntos) fr[p] = s.ext;
+    else for (const e of [s.ext, ...(s.extOtros || [])]) pt[e.slice(3)] = s.ext; // sitios de MOBI.E juntados
+  }
+  await mkdir(process.env.MAPAS_DIR, { recursive: true });
+  await writeFile(`${process.env.MAPAS_DIR}/mapas.json`, JSON.stringify({ fecha, fr, pt, tesela, tamTesela: TESELA }));
+  console.log(`Mapas para cada hora: ${Object.keys(fr).length} puntos de Francia, ${Object.keys(tesela).length} sitios`);
+}
