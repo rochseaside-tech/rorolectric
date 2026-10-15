@@ -213,6 +213,9 @@ table.ficha td:last-child { text-align: right; color: var(--texto); font-weight:
 .leaflet-popup-content .chip { padding: 4px 9px; font-size: 12px; cursor: default; }
 .leaflet-container a.leaflet-popup-close-button { color: var(--texto3); }
 .leaflet-control-attribution { font-size: 10px; }
+.ficha h3 { font-size: 20px; margin-bottom: 4px; }
+.ficha .chips { margin: 8px 0; }
+.ficha .chip { padding: 5px 10px; font-size: 13px; cursor: default; }
 .mapa-oscuro { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.7); }
 .mapa-busca { display: flex; gap: 8px; margin: 6px 0 10px; }
 .mapa-busca input { flex: 1; border-radius: 999px !important; padding: 10px 16px !important; }

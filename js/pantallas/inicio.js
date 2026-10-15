@@ -31,6 +31,12 @@ export function pintar(raiz) {
       <div><button class="tiempo-chip" id="mi-coche" style="border:0;font:inherit;font-size:13px;cursor:pointer">🚗 ${esc(COCHE.nombre)} · cambiar</button></div>
     </section>
 
+    <a class="tarjeta" href="#/mapa/aqui" style="display:flex;gap:14px;align-items:center;text-decoration:none;color:inherit">
+      <span style="font-size:30px">📍</span>
+      <span style="flex:1"><b style="display:block;font-size:17px">Estoy en un cargador</b><span class="suave" style="font-size:14px">¿Cómo se paga aquí? Te lo digo al momento</span></span>
+      <span style="font-size:24px;color:var(--texto3)">›</span>
+    </a>
+
     <section class="tarjeta">
       <h2>¿Llego?</h2>
       <div class="fila">

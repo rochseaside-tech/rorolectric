@@ -1,7 +1,7 @@
 // Mapa con todos los cargadores (registro oficial + OSM). Verde = rápido, ámbar = 22 kW, gris = lento.
 // Con el mapa muy alejado solo salen los rápidos, para no llenarlo de puntos.
 // Filtros: atajos arriba (rápidos, gratis, tarjeta, favoritos) y el botón «Filtros» con todo lo demás.
-import { enZona, clasePin, htmlPopup, fechaLista, enlazarFichas, SERVICIOS } from '../cargadores.js';
+import { enZona, clasePin, abrirFicha, fechaLista, SERVICIOS } from '../cargadores.js';
 import { claveCargador, notaDe, notas, bateria, ajustes, medido } from '../datos.js';
 import { ubicacion, ultimaUbicacion, esc, num, abrirHoja, cerrarHoja, capaMapa, buscarSitio, aviso } from '../comun.js';
 import { distancia, kmCon, consumo } from '../calc.js';
@@ -9,6 +9,7 @@ import { OPERADORES, operadorDe } from '../operadores.js';
 
 const FILTROS_BASE = { minKw: 0, ccs: false, tipo2: false, gratis: false, tarjeta: false, h24: false, servicios: [], empresa: '', sinClientes: false, favoritos: false, compatibles: true };
 let filtros = leerFiltros();
+let buscarPoste = false; // «Estoy en un cargador»: abrir la ficha del que tienes al lado
 let mapa = null, capa = null, yo = null, datos = [], visibles = [], marcadores = new Map(), aro = null, verRango = false, dondeEstoy = null, abrirLuego = null;
 
 function leerFiltros() {
@@ -40,7 +41,8 @@ const ATAJOS = [
   ['favoritos', '★ Favoritos', () => filtros.favoritos, () => { filtros.favoritos = !filtros.favoritos; }],
 ];
 
-export function pintar(raiz) {
+export function pintar(raiz, [modo] = []) {
+  buscarPoste = modo === 'aqui';
   raiz.innerHTML = `
     <form class="mapa-busca" id="busca"><input id="q" type="search" placeholder="Buscar ciudad, calle o sitio…" enterkeyhint="search" autocomplete="off">
       <button class="boton mini sec" type="button" id="lista">☰ Cerca</button></form>
@@ -56,12 +58,11 @@ export function pintar(raiz) {
   mapa = L.map('mapa', { zoomControl: false, attributionControl: true }).setView(ultimaUbicacion(), 13);
   capaMapa(mapa);
   capa = L.layerGroup().addTo(mapa);
-  enlazarFichas(mapa, (k) => datos.find((c) => claveCargador(c) === k));
 
   // Con una ficha abierta no se repinta (si no, se cerraría al moverse el mapa para enseñarla).
   let espera, fichaAbierta = false;
   mapa.on('popupopen', () => { fichaAbierta = true; }).on('popupclose', () => { fichaAbierta = false; });
-  mapa.on('moveend', () => { clearTimeout(espera); if (!fichaAbierta) espera = setTimeout(() => cargar(raiz), 350); });
+  mapa.on('moveend', () => { clearTimeout(espera); espera = setTimeout(() => { if (!fichaAbierta) cargar(raiz); }, 350); });
   raiz.querySelector('#yo').onclick = () => centrar(raiz, true);
   raiz.querySelector('#busca').onsubmit = async (e) => {
     e.preventDefault();
@@ -175,10 +176,18 @@ async function centrar(raiz, forzar) {
     mapa.setView(p, Math.max(mapa.getZoom(), 13));
     yo?.remove();
     yo = L.marker(p, { icon: L.divIcon({ className: '', html: '<div class="yo"></div>', iconSize: [18, 18] }), interactive: false }).addTo(mapa);
-  } else if (forzar) {
+  } else if (forzar || buscarPoste) {
     raiz.querySelector('#estado').textContent = 'No me dejan ver dónde estás: activa la ubicación del navegador.';
+    buscarPoste = false;
   }
-  cargar(raiz);
+  if (p && buscarPoste) mapa.setView(p, 18);
+  await cargar(raiz);
+  if (p && buscarPoste) {
+    buscarPoste = false;
+    const cerca = datos.map((c) => ({ c, d: distancia(p, [c.lat, c.lon]) })).sort((a, b) => a.d - b.d)[0];
+    if (cerca && cerca.d <= 0.3) { abrirLuego = claveCargador(cerca.c); mapa.setView([cerca.c.lat, cerca.c.lon], 17); dibujar(raiz); }
+    else aviso('No veo ningún cargador a menos de 300 m. Toca el más cercano en el mapa.');
+  }
   if (verRango) pintarRango();
 }
 
@@ -209,10 +218,11 @@ function dibujar(raiz) {
     const txt = c.potencia ? (c.potencia >= 1000 ? '' : Math.round(c.potencia)) : c.rapido ? '⚡' : '';
     const m = L.marker([c.lat, c.lon], { zIndexOffset: c.rapido ? 500 : 0,
       icon: L.divIcon({ className: '', html: `<div class="pin ${clasePin(c)}" ${notaDe(c)?.fav ? 'style="outline:3px solid #FFD84D;outline-offset:1px"' : ''}><span style="font-size:${String(txt).length > 2 ? 10 : 12}px">${esc(txt)}</span></div>`, iconSize: [28, 28], iconAnchor: [14, 30], popupAnchor: [0, -28] }),
-    }).bindPopup(htmlPopup(c), { maxWidth: 300 }).addTo(capa);
+    }).on('click', () => abrirFicha(c)).addTo(capa);
     marcadores.set(claveCargador(c), m);
   }
-  if (abrirLuego && marcadores.has(abrirLuego)) { marcadores.get(abrirLuego).openPopup(); abrirLuego = null; }
+  const pendiente = abrirLuego && visibles.find((c) => claveCargador(c) === abrirLuego);
+  if (pendiente) { abrirLuego = null; abrirFicha(pendiente); }
   const f = fechaLista();
   raiz.querySelector('#estado').textContent = (lista.length
     ? `${num(lista.length)}${lejos ? ' rápidos' : ''} aquí${lejos ? ' (acerca para ver todos)' : ''}`

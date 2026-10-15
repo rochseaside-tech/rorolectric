@@ -1,7 +1,7 @@
 // Viaje: ruta y paradas en cargadores rápidos REALES de la ruta (como ABRP, pero con la lista oficial).
 import { COCHE, TIPOS_VIA, ajustes, bateria, claveCargador, medido } from '../datos.js';
 import { consumo, planViaje, planConCargadores, muestrearRuta, cargadoresEnRuta } from '../calc.js';
-import { enZona, cargarTodos, htmlPopup, enlazarFichas } from '../cargadores.js';
+import { enZona, cargarTodos, abrirFicha } from '../cargadores.js';
 import { esc, num, euros, duracion, ubicacion, temperatura, campo, aviso, capaMapa, buscarSitio } from '../comun.js';
 
 let form = { desde: '', hasta: '', pct: null, via: 'autovia120', llegar: 15, km: '' };
@@ -103,18 +103,17 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
   capaMapa(mapa);
   const linea = L.polyline(ruta, { color: '#2BB8F0', weight: 5, opacity: .9 }).addTo(mapa);
   mapa.fitBounds(linea.getBounds(), { padding: [24, 24] });
-  enlazarFichas(mapa, (k) => enRuta.find((x) => claveCargador(x) === k));
   const elegidos = new Set(plan.paradas.map((p) => p.cargador).filter(Boolean));
   // Todos los rápidos de la ruta en pequeño; los elegidos, con su número.
   for (const x of enRuta) {
     if (elegidos.has(x)) continue;
-    L.circleMarker([x.lat, x.lon], { radius: 5, color: '#3FE0B0', weight: 2, fillOpacity: .6 }).bindPopup(htmlPopup(x), { maxWidth: 300 }).addTo(mapa);
+    L.circleMarker([x.lat, x.lon], { radius: 5, color: '#3FE0B0', weight: 2, fillOpacity: .6 }).on('click', () => abrirFicha(x)).addTo(mapa);
   }
   plan.paradas.forEach((p, i) => {
     const sitio = p.cargador ? [p.cargador.lat, p.cargador.lon] : null;
     if (!sitio) return;
     L.marker(sitio, { zIndexOffset: 1000, icon: L.divIcon({ className: '', html: `<div class="pin parada"><span style="color:#fff">${i + 1}</span></div>`, iconSize: [28, 28], iconAnchor: [14, 30], popupAnchor: [0, -28] }) })
-      .bindPopup(htmlPopup(p.cargador), { maxWidth: 300 }).addTo(mapa);
+      .on('click', () => abrirFicha(p.cargador)).addTo(mapa);
   });
 }
 

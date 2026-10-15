@@ -213,28 +213,29 @@ function bloqueMio(c) {
   return `<div style="margin-top:8px;font-size:13px"><b>Tu nota</b> <span class="muy-suave">(${fechaBonita(n.fecha)})</span><br>${est}${est && n.nota ? ' · ' : ''}${esc(n.nota || '')}</div>`;
 }
 
-// Botones de la ficha (favorito, nota, apuntar carga). «buscar» da el cargador por su clave.
-export function enlazarFichas(mapa, buscar) {
-  mapa.getContainer().addEventListener('click', (e) => {
-    const b = e.target.closest('[data-accion]'); if (!b) return;
-    const c = buscar(b.dataset.k); if (!c) return;
-    const accion = b.dataset.accion;
-    if (accion === 'fav') {
-      const fav = !notaDe(c)?.fav;
-      guardarNota(c, { fav });
-      b.textContent = fav ? '★ Favorito' : '☆ Guardar';
-      aviso(fav ? 'Guardado en favoritos' : 'Quitado de favoritos');
-    } else if (accion === 'nota') {
-      abrirNota(c, () => mapa.closePopup());
-    } else if (accion === 'cargo') {
-      const op = operadorDe(c.operador, c.nombre);
-      mapa.closePopup();
-      cargarAqui({ sitio: c.nombre, kw: c.potencia || (c.rapido ? 50 : 22), operador: op?.id || '', cargadorK: claveCargador(c) });
-    } else if (accion === 'carga') {
-      const op = operadorDe(c.operador, c.nombre);
-      abrirFormCarga({ lugar: c.gratis ? 'gratis' : c.rapido ? 'rapida' : 'lenta', sitio: c.nombre, operador: op?.id || '', cargadorK: claveCargador(c), desde: bateria().pct });
-    }
+// Ficha de un cargador: hoja que sube desde abajo (cabe todo y se puede desplazar).
+export function abrirFicha(c) {
+  abrirHoja(`<div class="ficha">${htmlPopup(c)}</div><div class="botones"><button class="boton sec" data-cerrar>Cerrar</button></div>`, (caja) => {
+    caja.addEventListener('click', (e) => { const b = e.target.closest('[data-accion]'); if (b) accionFicha(b, c); });
   });
+}
+
+function accionFicha(b, c) {
+  const accion = b.dataset.accion;
+  const op = operadorDe(c.operador, c.nombre);
+  if (accion === 'fav') {
+    const fav = !notaDe(c)?.fav;
+    guardarNota(c, { fav });
+    b.textContent = fav ? '★ Favorito' : '☆ Guardar';
+    aviso(fav ? 'Guardado en favoritos' : 'Quitado de favoritos');
+  } else if (accion === 'nota') {
+    abrirNota(c, () => abrirFicha(c));
+  } else if (accion === 'cargo') {
+    cerrarHoja();
+    cargarAqui({ sitio: c.nombre, kw: c.potencia || (c.rapido ? 50 : 22), operador: op?.id || '', cargadorK: claveCargador(c) });
+  } else if (accion === 'carga') {
+    abrirFormCarga({ lugar: c.gratis ? 'gratis' : c.rapido ? 'rapida' : 'lenta', sitio: c.nombre, operador: op?.id || '', cargadorK: claveCargador(c), desde: bateria().pct });
+  }
 }
 
 function abrirNota(c, alGuardar) {
