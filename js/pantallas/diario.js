@@ -1,7 +1,26 @@
 // Gastos: cada carga apuntada, resumen por mes y comparación con la gasolina.
-import { COCHE, ajustes, cambiarAjuste, cargas, guardarCarga, borrarCarga, hoyISO, exportar, importar, marcarHecho } from '../datos.js';
-import { resumen, co2Ahorrado } from '../calc.js';
-import { esc, num, euros, fechaBonita, abrirHoja, cerrarHoja, aviso, campo } from '../comun.js';
+import { COCHE, ajustes, cambiarAjuste, cargas, guardarCarga, borrarCarga, hoyISO, exportar, importar, marcarHecho, corregirCoche } from '../datos.js';
+import { resumen, co2Ahorrado, saludBateria } from '../calc.js';
+import { esc, num, euros, fechaBonita, abrirHoja, cerrarHoja, aviso, campo, certeza } from '../comun.js';
+
+// Salud de la batería, calculada con las cargas apuntadas (kWh metidos y % que subió).
+function tarjetaSalud(todas) {
+  if (!todas.length) return '';
+  const fabrica = COCHE.fabrica?.util || COCHE.util;
+  const s = saludBateria(todas, fabrica);
+  if (!s.util) {
+    return `<section class="tarjeta"><h2>🔋 Salud de la batería</h2>
+      <p class="suave">Apunta en 3 cargas el % al llegar y al acabar (que suba al menos 30 puntos) y te digo cuánta batería real le queda a tu coche. ${s.n ? `Llevas ${s.n} de 3.` : ''}</p></section>`;
+  }
+  const pct = Math.round(s.pct);
+  const corregida = ajustes().correccion?.util;
+  const sugerir = pct <= 95 && !(corregida && Math.abs(corregida - s.util) < 1);
+  return `<section class="tarjeta"><h2>🔋 Salud de la batería</h2>
+    <div class="rejilla"><div class="dato grande ${pct >= 90 ? 'verde' : ''}"><b>${pct} %</b><span>de la de fábrica</span></div>
+      <div class="dato"><b>${num(s.util, 1)} kWh</b><span>de ${num(fabrica, 1)} kWh nueva</span></div></div>
+    <p class="muy-suave" style="margin-top:8px">Calculado con tus últimas ${s.n} cargas largas ${certeza('baja')}: el % que enseña el coche y los kWh del poste no son exactos, así que tómalo como orientación. Con más cargas apuntadas, más fiable. Por debajo del 70 % antes de tiempo, la garantía de la batería suele cubrirla.</p>
+    ${sugerir ? `<button class="boton sec" id="usar-salud" data-util="${s.util}" style="margin-top:8px">Calcular la autonomía con ${num(s.util, 1)} kWh</button>` : ''}</section>`;
+}
 
 export const LUGARES = {
   casa: ['🏠', 'En casa'],
@@ -35,6 +54,7 @@ export function pintar(raiz) {
         <p>🌱 Y unos <b>${num(co2Ahorrado(r.kmHechos, r.kwh, ajustes()))} kg de CO₂</b> menos (estimado).</p></div>` : ''}
       ${grafMeses(meses)}
     </section>
+    ${tarjetaSalud(todas)}
     ${Object.entries(meses).map(([mes, lista]) => `
       <section class="tarjeta">
         <div class="tarjeta-cab"><h2 style="text-transform:capitalize">${new Date(mes + '-15').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}</h2>
@@ -56,6 +76,10 @@ export function pintar(raiz) {
     </section>`;
 
   raiz.querySelector('#nueva').onclick = () => abrirFormCarga({});
+  raiz.querySelector('#usar-salud')?.addEventListener('click', (e) => {
+    corregirCoche('util', Math.round(+e.target.dataset.util * 10) / 10);
+    aviso('Hecho: la autonomía se calcula ya con esa batería'); pintar(raiz);
+  });
   raiz.querySelectorAll('[data-id]').forEach((li) => { li.onclick = () => abrirFormCarga(todas.find((c) => c.id === li.dataset.id)); });
   raiz.querySelector('#exportar').onclick = guardarCopia;
   raiz.querySelector('#csv')?.addEventListener('click', () => compartirArchivo(hojaCalculo(todas), `rorolectric-gastos-${hoyISO()}.csv`, 'text/csv'));

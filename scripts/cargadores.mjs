@@ -9,7 +9,7 @@
 // Lo ejecuta cada noche .github/workflows/publicar.yml.
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { TARJETA, APP, RFID, GRATIS, SIN_REGISTRO, CLIENTES, leerOsm, descargarOsm, clave, metros, vecinos, sumarEnchufes, marcaDe, aFila } from './comun.mjs';
+import { TARJETA, RESERVABLE, APP, RFID, GRATIS, SIN_REGISTRO, CLIENTES, leerOsm, descargarOsm, clave, metros, vecinos, sumarEnchufes, marcaDe, aFila } from './comun.mjs';
 
 const URL_OFICIAL = 'https://infocar.dgt.es/datex2/v3/miterd/EnergyInfrastructureTablePublication/electrolineras.xml';
 const SALIDA = new URL('../datos/cargadores.json', import.meta.url);
@@ -121,8 +121,9 @@ function precioSitio(r, precios) {
   let rMin = Infinity, rMax = 0, nMin = Infinity, nMax = 0, hora = 0, fijo = 0, plaza = 0, desde = Infinity, alguno = false;
   for (const [id, , kw, dc] of r.enchufes) {
     const p = precios[id]; if (!p) continue;
-    alguno = true;
     const [min, max, h, f, pl, de] = p;
+    if (min == null && !h && !f) continue; // solo dice que se puede reservar
+    alguno = true;
     if (min != null) {
       if (dc || kw >= 50) { rMin = Math.min(rMin, min); rMax = Math.max(rMax, max); } else { nMin = Math.min(nMin, min); nMax = Math.max(nMax, max); }
     }
@@ -154,6 +155,7 @@ async function juntarReve(sitios, rejilla) {
     if (/\bpruebas?\b|^test\b/i.test(x.nombre)) continue;
     const s = { lat: x.la, lon: x.lo };
     const precio = precioSitio(x, precios);
+    const reservable = x.reservable || x.enchufes.some(([idE]) => precios[idE]?.[6]);
     const marcas = new Set([x.marca, x.empresa].filter(Boolean).map((n) => marcaDe(n).toLowerCase()));
     const misma = (o) => marcas.has(marcaDe(o.operador).toLowerCase()) || [...marcas].some((m) => m.length > 3 && marcaDe(o.operador).toLowerCase().startsWith(m));
     const cerca = vecinos(rejilla, s, 100).sort((a, b) => metros(s, a) - metros(s, b));
@@ -161,6 +163,7 @@ async function juntarReve(sitios, rejilla) {
     if (m) {
       m.reve ||= id; m.precio = mezclarPrecio(m.precio, precio);
       if (x.tarjeta) m.pago |= TARJETA;
+      if (reservable) m.pago |= RESERVABLE;
       if (!m.horario && x.h24) m.horario = '24h';
       if (!m.fuente.includes('r')) m.fuente += 'r';
       juntados++;
@@ -170,7 +173,7 @@ async function juntarReve(sitios, rejilla) {
         if (!t) continue;
         const e = (enchufes[t] ||= { n: 0, kw: 0 }); e.n++; e.kw = Math.max(e.kw, kw < 1000 ? kw : 0);
       }
-      const n = { lat: x.la, lon: x.lo, nombre: x.nombre || x.marca || x.empresa, operador: x.marca || x.empresa, dir: x.dir, horario: x.h24 ? '24h' : '', pago: x.tarjeta ? TARJETA : 0,
+      const n = { lat: x.la, lon: x.lo, nombre: x.nombre || x.marca || x.empresa, operador: x.marca || x.empresa, dir: x.dir, horario: x.h24 ? '24h' : '', pago: (x.tarjeta ? TARJETA : 0) | (reservable ? RESERVABLE : 0),
         enchufes, puntos: 0, servicios: new Set(), fuente: 'r', reve: id, precio };
       sitios.push(n); nuevos++;
       const k = clave(n.lat, n.lon); (rejilla.get(k) || rejilla.set(k, []).get(k)).push(n);

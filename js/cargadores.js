@@ -3,9 +3,9 @@
 // (.github/workflows/cargadores.yml). Fuera de España se pregunta a OpenStreetMap en directo.
 // Precios: los oficiales de REVE (Red Eléctrica), que baja scripts/reve.mjs; si está libre ahora
 // no lo tenemos aquí, pero cada ficha enlaza a la de REVE, que sí lo dice.
-import { esc, num, abrirHoja, cerrarHoja, aviso, fechaBonita } from './comun.js';
-import { distancia } from './calc.js';
-import { COCHE, claveCargador, notaDe, guardarNota, cargas, bateria } from './datos.js';
+import { esc, num, abrirHoja, cerrarHoja, aviso, fechaBonita, duracion, hora, preciosPVPC } from './comun.js';
+import { distancia, minutosDC, horasAC, kwhRedDC, kwhRedAC, preciosTarifa, ventanaBarata } from './calc.js';
+import { COCHE, claveCargador, notaDe, guardarNota, cargas, bateria, ajustes, objetivoRecomendado } from './datos.js';
 import { operadorDe, enlaceApp, enlacePago, esIphone, COMODINES } from './operadores.js';
 import { abrirFormCarga } from './pantallas/diario.js';
 import { cargarAqui } from './pantallas/cargar.js';
@@ -246,6 +246,13 @@ export function htmlPopup(c) {
     ${c.clientes ? '<div class="suave">Solo para clientes del sitio</div>' : ''}
     ${c.servicios ? `<div class="suave">${[...c.servicios].map((s) => SERVICIOS[s]).filter(Boolean).join(' · ')}</div>` : ''}
     ${bloquePrecio(c)}
+    ${c.compatible ? `<div id="coste-aqui" style="margin-top:8px;padding:10px;border-radius:10px;background:var(--tarjeta2);font-size:13px;line-height:1.5">
+      <b style="display:block;margin-bottom:4px">Con tu coche, aquí</b>
+      <div style="display:flex;align-items:center;gap:8px">Llegas con
+        <input id="ca-de" type="number" inputmode="numeric" min="0" max="99" value="${bateria().pct}" style="width:72px;flex:none;padding:6px 8px"> %</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px">Hasta
+        <span class="chips" id="ca-a" style="margin:0;flex-wrap:nowrap">${[80, 90, 100].map((v) => `<button type="button" class="chip ${v === (c.rapido ? 80 : objetivoRecomendado()) ? 'activo' : ''}" data-a="${v}">${v} %</button>`).join('')}</span></div>
+      <div id="ca-res" style="margin-top:6px"></div><div id="ca-casa" class="suave" style="margin-top:4px"></div></div>` : ''}
     ${bloquePago(c)}
     ${bloqueMio(c)}
     <div class="fila" style="margin-top:10px">
@@ -270,6 +277,7 @@ function bloquePago(c) {
   if (op?.id === 'tesla' && COCHE.supercargador) filas.push('🚗 <b>Con tu Tesla: enchufar y listo</b>, se cobra solo en tu cuenta de Tesla');
   if (c.gratis) filas.push(`🎁 <b>Gratis</b> según ${c.fuente === 'f' ? 'el registro oficial de Francia' : 'OpenStreetMap'}`);
   if (c.pago.includes('Sin registro') && c.fuente === 'f') filas.push('🙋 Se puede cargar sin abono ni registro');
+  if (c.reservable) filas.push(`📅 <b>Se puede reservar</b> ${op ? `desde la app de ${esc(op.nombre)}` : 'desde la app de la empresa'}`);
   if (c.pago.includes('Tarjeta')) filas.push('💳 <b>Acepta tarjeta</b> en el poste');
   else if (c.rapido) filas.push('💳 Si el poste tiene lector o código QR, paga con tarjeta sin app');
   if (op) filas.push(`📱 App de ${esc(op.nombre)}: <a href="${enlaceApp(op.app)}">${esc(op.app)}</a>${op.nota ? `<br><span class="muy-suave">${esc(op.nota)}</span>` : ''}`);
@@ -304,7 +312,68 @@ function bloqueMio(c) {
 export function abrirFicha(c) {
   abrirHoja(`<div class="ficha">${htmlPopup(c)}</div><div class="botones"><button class="boton sec" data-cerrar>Cerrar</button></div>`, (caja) => {
     caja.addEventListener('click', (e) => { const b = e.target.closest('[data-accion]'); if (b) accionFicha(b, c); });
+    montarCoste(caja, c);
   });
+}
+
+/* ---------- «Con tu coche, aquí» y «¿aquí o en casa?» ---------- */
+// Lo que tardas y pagas en este cargador desde tu batería de ahora, con la curva de carga de tu coche.
+export function costeAqui(c, de, a) {
+  const dc = c.rapido && c.ccs;
+  const kw = dc ? Math.min(c.potencia || 50, COCHE.dcMax) : Math.min(c.soloSchuko ? 2.3 : c.potencia || 7.4, COCHE.acMax);
+  const minutos = dc ? minutosDC(de, a, kw) : horasAC(de, a, kw) * 60;
+  const kwh = dc ? kwhRedDC(de, a) : kwhRedAC(de, a);
+  const ap = ajustes();
+  let euros = null, eurosAlto = null, fuente = '';
+  if (c.gratis) { euros = eurosAlto = 0; fuente = 'gratis'; }
+  else {
+    const p = precioKwh(c, { rapida: dc }), pAlto = precioKwh(c, { rapida: dc, alto: true });
+    const extra = c.precio ? (c.precio[5] || 0) + (c.precio[4] || 0) * minutos / 60 : 0;
+    if (p != null || (c.precio && c.precio[4])) { euros = kwh * (p || 0) + extra; eurosAlto = kwh * (pAlto || 0) + extra; fuente = 'reve'; }
+    else { euros = eurosAlto = kwh * (dc ? +ap.precioRapida : +ap.precioLenta); fuente = 'ajustes'; }
+  }
+  return { dc, kw, minutos, kwh, euros, eurosAlto, fuente };
+}
+
+function montarCoste(caja, c) {
+  const res = caja.querySelector('#ca-res'); if (!res) return;
+  const deEl = caja.querySelector('#ca-de');
+  let a = +caja.querySelector('#ca-a .chip.activo')?.dataset.a || 80;
+  const pintar = () => {
+    const de = Math.max(0, Math.min(99, +deEl.value || 0));
+    if (de >= a) { res.innerHTML = '<span class="muy-suave">Ya tienes esa batería.</span>'; caja.querySelector('#ca-casa').innerHTML = ''; return; }
+    const r = costeAqui(c, de, a);
+    const dinero = r.fuente === 'gratis' ? '🎁 gratis'
+      : `💶 <b>≈ ${r.eurosAlto - r.euros >= 0.5 ? `${num(r.euros)} a ${num(r.eurosAlto)}` : num(r.euros, r.euros < 10 ? 2 : 0)} €</b>`;
+    const nota = r.fuente === 'ajustes' ? `<br><span class="muy-suave">Este cargador no publica precio: uso el tuyo de Ajustes (${num(r.dc ? ajustes().precioRapida : ajustes().precioLenta, 2)} €/kWh).</span>` : '';
+    const plaza = c.precio?.[6] && c.precio[7] && r.minutos > c.precio[7] ? `<br><span style="color:var(--ambar)">⚠️ Tu carga dura más de ${c.precio[7]} min: a partir de ahí cobran ${num(c.precio[6], 2)} €/hora por la plaza.</span>` : '';
+    res.innerHTML = `⏱️ <b>${duracion(r.minutos)}</b> · ⚡ ${num(r.kwh, 1)} kWh · ${dinero}${r.dc ? '' : ` <span class="muy-suave">(a ${num(r.kw, 1)} kW)</span>`}${nota}${plaza}`;
+    aquiOCasa(caja, c, de, a, r);
+  };
+  deEl.oninput = pintar;
+  caja.querySelector('#ca-a').onclick = (e) => {
+    const b = e.target.closest('[data-a]'); if (!b) return;
+    a = +b.dataset.a;
+    caja.querySelectorAll('#ca-a .chip').forEach((x) => x.classList.toggle('activo', x === b));
+    pintar();
+  };
+  pintar();
+}
+
+// Lo mismo cargado en casa, a la hora más barata que queda (PVPC o tu tarifa).
+let turnoCasa = 0;
+async function aquiOCasa(caja, c, de, a, r) {
+  const el = caja.querySelector('#ca-casa'); if (!el || r.fuente === 'gratis') { if (el) el.innerHTML = ''; return; }
+  const yo = ++turnoCasa;
+  const ap = ajustes();
+  try {
+    const precios = ap.tarifa === 'pvpc' ? await preciosPVPC() : preciosTarifa(ap);
+    const kwCasa = Math.min(+ap.cargadorCasa || 7.4, COCHE.acMax);
+    const v = ventanaBarata(precios, kwhRedAC(de, a), kwCasa);
+    if (yo !== turnoCasa || !v) return;
+    const ahorro = r.euros - v.coste;
+    el.innerHTML = `🏠 En casa: <b>≈ ${num(v.coste, 2)} €</b> enchufando a las ${hora(v.inicio < new Date() ? new Date() : v.inicio)}${ahorro >= 1 ? ` · aquí pagas ${num(ahorro)} € más` : ''}`;
+  } catch { if (yo === turnoCasa) el.innerHTML = ''; }
 }
 
 function accionFicha(b, c) {

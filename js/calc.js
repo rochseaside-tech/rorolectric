@@ -247,7 +247,9 @@ function extraEn(perfil, km) {
 // Plan con cargadores reales: en cada tramo, el último cargador rápido al que llegas con margen
 // (y, si hay varios cerca del final, el más potente). Si en un tramo no hay ninguno, parada «teórica».
 // Con «perfil» (desnivel) la batería se calcula tramo a tramo: las subidas gastan más, las bajadas recuperan.
-export function planConCargadores(km, pctIni, kwh100, cargadores, { llegarCon = 15, paradaEn = 12, cargarHasta = 80, perfil = null } = {}) {
+// criterio «barato»: entre los cargadores de los últimos 80 km alcanzables, el de menor precio (precioDe(c) en €/kWh;
+// sin precio conocido cuenta como el de Ajustes). «rapido»: el más potente de los últimos 25 km.
+export function planConCargadores(km, pctIni, kwh100, cargadores, { llegarCon = 15, paradaEn = 12, cargarHasta = 80, perfil = null, criterio = 'rapido', precioDe = null } = {}) {
   const paradas = [];
   let pos = 0, pct = pctIni;
   const E = (x) => x * kwh100 / 100 + extraEn(perfil, x);            // kWh gastados desde el inicio hasta el km x
@@ -262,9 +264,15 @@ export function planConCargadores(km, pctIni, kwh100, cargadores, { llegarCon = 
     let elegido = null;
     if (posibles.length) {
       const ultimo = posibles.at(-1).kmRuta;
-      // Entre los de los últimos 25 km alcanzables, el más potente (a igualdad, el más lejano).
-      elegido = posibles.filter((c) => c.kmRuta >= ultimo - 25)
-        .sort((a, b) => Math.min(b.potencia || 50, COCHE.dcMax) - Math.min(a.potencia || 50, COCHE.dcMax) || b.kmRuta - a.kmRuta)[0];
+      const kwDe = (c) => Math.min(c.potencia || 50, COCHE.dcMax);
+      if (criterio === 'barato' && precioDe) {
+        // El más barato de los últimos 80 km alcanzables (a igualdad de precio, el más potente).
+        elegido = posibles.filter((c) => c.kmRuta >= ultimo - 80)
+          .sort((a, b) => precioDe(a) - precioDe(b) || kwDe(b) - kwDe(a) || b.kmRuta - a.kmRuta)[0];
+      } else {
+        // Entre los de los últimos 25 km alcanzables, el más potente (a igualdad, el más lejano).
+        elegido = posibles.filter((c) => c.kmRuta >= ultimo - 25).sort((a, b) => kwDe(b) - kwDe(a) || b.kmRuta - a.kmRuta)[0];
+      }
     }
     const kmParada = elegido ? elegido.kmRuta : alcance;
     if (kmParada - pos < 5 && paradas.length) break;
@@ -291,6 +299,20 @@ export function consumoMedido(cargas) {
   const kwhBateria = despues.reduce((s, c) => s + (+c.kwh || 0) * (c.lugar === 'rapida' ? PERDIDAS_DC : PERDIDAS_AC), 0);
   const v = kwhBateria / km * 100;
   return v > 8 && v < 40 ? { kwh100: v, km } : null;
+}
+
+// Salud de la batería con tus cargas: si metiste X kWh y el % subió Y puntos, la batería entera tiene X / Y × 100.
+// Solo cargas con «desde» y «hasta» apuntados y al menos 30 puntos de subida (con menos, el error del % del coche pesa mucho).
+// Devuelve la mediana de las últimas 10 (para que una carga mal apuntada no la tuerza).
+export function saludBateria(cargas, utilFabrica) {
+  const validas = cargas.filter((c) => +c.kwh > 0 && c.desde !== '' && c.hasta !== '' && c.desde != null && c.hasta != null && +c.hasta - +c.desde >= 30)
+    .slice(0, 10)
+    .map((c) => (+c.kwh * (c.lugar === 'rapida' ? PERDIDAS_DC : PERDIDAS_AC)) / ((+c.hasta - +c.desde) / 100))
+    .filter((v) => v > utilFabrica * 0.5 && v < utilFabrica * 1.3)
+    .sort((a, b) => a - b);
+  if (validas.length < 3) return { n: validas.length };
+  const util = validas[Math.floor(validas.length / 2)];
+  return { n: validas.length, util, pct: Math.min(100, util / utilFabrica * 100) };
 }
 
 // Mientras carga: qué % lleva tras «min» minutos, empezando en «de», a «kw» (alterna o rápida).

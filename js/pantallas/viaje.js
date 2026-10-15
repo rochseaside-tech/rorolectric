@@ -1,21 +1,31 @@
 // Viaje: ruta y paradas en cargadores rápidos REALES de la ruta (como ABRP, pero con la lista oficial).
-import { COCHE, TIPOS_VIA, ajustes, bateria, claveCargador, medido } from '../datos.js';
+import { COCHE, TIPOS_VIA, ajustes, bateria, claveCargador, medido, lugares, lugarPorNombre } from '../datos.js';
 import { consumo, planViaje, planConCargadores, muestrearRuta, cargadoresEnRuta, perfilEnergia } from '../calc.js';
 import { enZona, cargarTodos, abrirFicha, precioKwh, precioCorto } from '../cargadores.js';
-import { esc, num, euros, duracion, ubicacion, temperatura, campo, aviso, capaMapa, buscarSitio } from '../comun.js';
+import { esc, num, euros, duracion, ubicacion, temperatura, campo, aviso, capaMapa, buscarSitio, rutaEnCoche } from '../comun.js';
 
-let form = { desde: '', hasta: '', pct: null, via: 'autovia120', llegar: 15, km: '', temp: '', parada: 12, cargarHasta: 80, minKw: 50 };
+let form = { desde: '', hasta: '', pct: null, via: 'autovia120', llegar: 15, km: '', temp: '', parada: 12, cargarHasta: 80, minKw: 50, criterio: 'rapido' };
 let mapa = null;
 
-export function pintar(raiz) {
+// Botones con los sitios guardados (Ajustes → Mis sitios) para rellenar «Desde» o «Hasta».
+const botonesLugares = (campoDestino) => (lugares().length
+  ? `<div class="chips" data-rellena="${campoDestino}" style="margin:-4px 0 12px">${lugares().map((l) => `<button type="button" class="chip" data-nombre="${esc(l.nombre)}">${esc(l.emoji || '📍')} ${esc(l.nombre)}</button>`).join('')}</div>` : '');
+
+export function pintar(raiz, [destino] = []) {
   if (form.pct == null) form.pct = bateria().pct;
+  if (destino) { form.hasta = decodeURIComponent(destino); form.desde = ''; form.pct = bateria().pct; }
   raiz.innerHTML = `
     <div class="titulo-pantalla"><h1>Viaje</h1><p>Dime adónde vas y te digo en qué cargadores parar y cuánto.</p></div>
     <form class="tarjeta" id="f">
       ${campo('Desde', 'desde', form.desde, { tipo: 'text', extra: 'placeholder="Vacío = donde estoy"' })}
+      ${botonesLugares('desde')}
       ${campo('Hasta', 'hasta', form.hasta, { tipo: 'text', extra: 'placeholder="Ej. Zaragoza, Andorra la Vella…" required' })}
+      ${botonesLugares('hasta') || '<p class="muy-suave" style="margin:-4px 0 12px">Guarda tus sitios habituales en <a href="#/ajustes">Ajustes</a> y aquí sale un botón para cada uno.</p>'}
       <div class="fila">${campo('Salgo con', 'pct', form.pct, { unidad: '%' })}${campo('Llegar con al menos', 'llegar', form.llegar, { unidad: '%' })}</div>
       <label class="campo"><span>Por dónde</span><select name="via">${TIPOS_VIA.map(([k, t]) => `<option value="${k}" ${k === form.via ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <label class="campo"><span>Paradas</span><div class="segmento" style="margin:0" id="criterio">
+        <button type="button" data-c="rapido" class="${form.criterio !== 'barato' ? 'activo' : ''}">⚡ Más rápido</button>
+        <button type="button" data-c="barato" class="${form.criterio === 'barato' ? 'activo' : ''}">💶 Más barato</button></div></label>
       <button class="boton" type="submit">Planificar</button>
       <details style="margin-top:12px"><summary class="suave" style="cursor:pointer">Más opciones (temperatura, paradas…)</summary>
         <div style="margin-top:10px">
@@ -32,6 +42,17 @@ export function pintar(raiz) {
   const f = raiz.querySelector('#f');
   const leer = () => { form = { ...form, ...Object.fromEntries(new FormData(f)) }; };
   f.onsubmit = (e) => { e.preventDefault(); leer(); planificar(raiz); };
+  f.querySelectorAll('[data-rellena]').forEach((fila) => { fila.onclick = (e) => {
+    const b = e.target.closest('[data-nombre]'); if (!b) return;
+    f.querySelector(`[name=${fila.dataset.rellena}]`).value = b.dataset.nombre;
+    fila.querySelectorAll('.chip').forEach((x) => x.classList.toggle('activo', x === b));
+  }; });
+  f.querySelector('#criterio').onclick = (e) => {
+    const b = e.target.closest('[data-c]'); if (!b) return;
+    form.criterio = b.dataset.c;
+    f.querySelectorAll('#criterio button').forEach((x) => x.classList.toggle('activo', x === b));
+  };
+  if (destino) { leer(); planificar(raiz); }
   raiz.querySelector('#manual').onclick = () => { leer(); if (+form.km > 0) mostrar(raiz, { km: +form.km }); else aviso('Pon los km'); };
 }
 
@@ -39,15 +60,13 @@ async function planificar(raiz) {
   const res = raiz.querySelector('#res');
   res.innerHTML = '<div class="tarjeta suave">Buscando la ruta…</div>';
   try {
-    const origen = form.desde.trim() ? await buscarSitio(form.desde) : { punto: await ubicacion(), nombre: 'donde estás' };
+    // Un sitio guardado se usa tal cual (sin buscarlo en el mapa).
+    const sitio = async (t) => { const l = lugarPorNombre(t); return l ? { punto: l.punto, nombre: `${l.emoji || ''} ${l.nombre}`.trim() } : buscarSitio(t); };
+    const origen = form.desde.trim() ? await sitio(form.desde) : { punto: await ubicacion(), nombre: 'donde estás' };
     if (!origen.punto) throw new Error('No sé dónde estás: escribe el «Desde» o activa la ubicación.');
-    const destino = await buscarSitio(form.hasta);
-    const [a, b] = [origen.punto, destino.punto];
-    const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson`);
-    const d = await r.json();
-    if (d.code !== 'Ok') throw new Error('No encuentro ruta en coche entre esos dos sitios.');
-    const ruta = d.routes[0].geometry.coordinates.map(([lo, la]) => [la, lo]);
-    await mostrar(raiz, { km: d.routes[0].distance / 1000, horas: d.routes[0].duration / 3600, ruta, origen, destino });
+    const destino = await sitio(form.hasta);
+    const r = await rutaEnCoche(origen.punto, destino.punto);
+    await mostrar(raiz, { ...r, origen, destino });
   } catch (e) {
     res.innerHTML = `<div class="resultado ambar"><div class="grande">Ups</div><p>${esc(e.message || 'Sin conexión')}</p></div>`;
   }
@@ -93,7 +112,10 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
   const validos = enRuta.filter((x) => (x.potencia || 50) >= +form.minKw);
   let desnivel = null;
   if (ruta) { try { desnivel = await desnivelDe(ruta, km); opciones.perfil = desnivel.perfil; } catch { /* sin alturas: como si fuera llano */ } }
-  const plan = ruta ? planConCargadores(km, +form.pct, c, validos, opciones) : planViaje(km, +form.pct, c, opciones);
+  const precioDe = (x) => precioKwh(x, { rapida: true, alto: true }) ?? +ajustes().precioRapida + 0.02; // sin precio: el de Ajustes y un poco más
+  const planDe = (criterio) => (ruta ? planConCargadores(km, +form.pct, c, validos, { ...opciones, criterio, precioDe }) : planViaje(km, +form.pct, c, opciones));
+  const plan = planDe(form.criterio);
+  const otro = ruta ? planDe(form.criterio === 'barato' ? 'rapido' : 'barato') : null;
   const n = plan.paradas.length;
   // OSRM calcula a velocidad legal; a 110 se tarda un poco más.
   const conduccion = horas ? horas * (form.via === 'autovia110' ? 1.06 : 1) : km / (form.via.startsWith('autovia') ? 100 : 60);
@@ -105,6 +127,7 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
       ${plan.llegada != null ? `Llegas con un <b>${Math.round(plan.llegada)} %</b>.` : ''}</p>
       ${desnivel && desnivel.sube > 50 ? `<p>⛰️ Subes ${num(desnivel.sube)} m y bajas ${num(desnivel.baja)} m en total: ${desnivel.total >= 0 ? 'gasta' : 'recupera'} unos <b>${num(Math.abs(desnivel.total), 1)} kWh</b> (≈ ${num(Math.abs(desnivel.total) / COCHE.util * 100)} % de batería). Ya está contado tramo a tramo.</p>` : ''}
       ${costeViaje(km, plan)}
+      ${comparar(plan, otro)}
       <p class="muy-suave">Consumo usado: ${num(c, 1)} kWh/100 km${temp != null ? ` con ${num(temp)} °C` : ''}. ${ruta ? `${enRuta.length} cargadores rápidos a menos de 3 km de la ruta.` : ''} Paradas con al menos un ${opciones.paradaEn} %, cargando hasta el ${opciones.cargarHasta} % o lo justo para llegar, en cargadores de ${form.minKw} kW o más (cámbialo en «Más opciones»).</p>
     </div>
     ${ruta ? '<div id="mapa-viaje" class="mapa bajo"></div>' : ''}
@@ -147,6 +170,16 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
 function costeViaje(km, plan) {
   const a = ajustes();
   // Con el precio de REVE de cada parada si lo hay (el más caro de su horquilla, para no quedarse corto); si no, el de Ajustes.
+  const { calle, conReve } = costeParadas(plan);
+  const n = plan.paradas.length;
+  const base = !n ? '' : conReve === n ? '(con el precio oficial de cada parada, de REVE)' : conReve ? `(${conReve} de ${n} paradas con su precio de REVE; el resto a ${euros(a.precioRapida)}/kWh)` : `(a ${euros(a.precioRapida)}/kWh)`;
+  const gasolina = km * a.gasolinaL100 / 100 * a.gasolinaPrecio;
+  return `<p style="margin-top:8px"><b>${n ? `≈ ${euros(calle, 0)} en cargas por el camino` : 'Sin gastar nada por el camino'}</b>
+    ${base} · en gasolina serían ≈ ${euros(gasolina, 0)}. Lo que salgas cargado de casa es aparte.</p>`;
+}
+
+function costeParadas(plan) {
+  const a = ajustes();
   let calle = 0, conReve = 0;
   for (const p of plan.paradas) {
     const kwh = Math.max(0, p.hasta - p.llegaCon) / 100 * COCHE.util / 0.95;
@@ -154,11 +187,17 @@ function costeViaje(km, plan) {
     if (precio != null) conReve++;
     calle += kwh * (precio ?? a.precioRapida) + (precio != null ? p.cargador.precio[5] || 0 : 0);
   }
-  const n = plan.paradas.length;
-  const base = !n ? '' : conReve === n ? '(con el precio oficial de cada parada, de REVE)' : conReve ? `(${conReve} de ${n} paradas con su precio de REVE; el resto a ${euros(a.precioRapida)}/kWh)` : `(a ${euros(a.precioRapida)}/kWh)`;
-  const gasolina = km * a.gasolinaL100 / 100 * a.gasolinaPrecio;
-  return `<p style="margin-top:8px"><b>${n ? `≈ ${euros(calle, 0)} en cargas por el camino` : 'Sin gastar nada por el camino'}</b>
-    ${base} · en gasolina serían ≈ ${euros(gasolina, 0)}. Lo que salgas cargado de casa es aparte.</p>`;
+  return { calle, conReve };
+}
+
+// La otra forma de hacer el viaje (más rápida o más barata), para que se vea lo que se gana o se pierde.
+function comparar(plan, otro) {
+  if (!otro || plan.imposible || otro.imposible || !plan.paradas.length) return '';
+  const e = costeParadas(otro).calle - costeParadas(plan).calle, m = otro.minutosCarga - plan.minutosCarga;
+  if (Math.abs(e) < 1 && Math.abs(m) < 3) return `<p class="muy-suave">${form.criterio === 'barato' ? 'La opción «más rápido» sale' : 'La opción «más barato» sale'} prácticamente igual.</p>`;
+  const nombre = form.criterio === 'barato' ? '⚡ Más rápido' : '💶 Más barato';
+  const partes = [Math.abs(e) >= 1 && (e > 0 ? `pagarías ${euros(e, 0)} más` : `ahorrarías ${euros(-e, 0)}`), Math.abs(m) >= 3 && (m > 0 ? `estarías ${duracion(m)} más cargando` : `cargarías ${duracion(-m)} menos`)].filter(Boolean);
+  return `<p class="muy-suave">Con «${nombre}»: ${partes.join(' y ')}${otro.paradas.length !== plan.paradas.length ? ` (${otro.paradas.length} paradas)` : ''}.</p>`;
 }
 
 export function salir() { mapa?.remove(); mapa = null; }

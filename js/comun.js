@@ -114,10 +114,25 @@ export function capaMapa(mapa) {
 
 // Buscar un sitio por su nombre (OpenStreetMap).
 export async function buscarSitio(texto) {
-  const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=es&countrycodes=es,fr,pt,ad,it,de,ch,be,nl&q=${encodeURIComponent(texto)}`);
+  const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=6&addressdetails=1&accept-language=es&countrycodes=es,fr,pt,ad,it,de,ch,be,nl&q=${encodeURIComponent(texto)}`);
   const d = await r.json();
   if (!d.length) throw new Error(`No encuentro «${texto}». Prueba con el pueblo o la ciudad.`);
-  return { punto: [+d[0].lat, +d[0].lon], nombre: d[0].display_name.split(',').slice(0, 2).join(',') };
+  // «Plaza Mayor, Burgos»: mejor la de la ciudad de Burgos que la de un pueblo de la provincia de Burgos.
+  const llano = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  const partes = texto.split(',').map(llano).filter(Boolean);
+  const pueblo = (x) => { const a = x.address || {}; return a.city || a.town || a.village || a.municipality || ''; };
+  const mejor = partes.length > 1 ? d.find((x) => partes.slice(1).some((t) => llano(pueblo(x)) === t)) || d[0] : d[0];
+  const municipio = pueblo(mejor);
+  const primera = mejor.display_name.split(',')[0].trim();
+  return { punto: [+mejor.lat, +mejor.lon], nombre: municipio && llano(primera) !== llano(municipio) ? `${primera}, ${municipio}` : mejor.display_name.split(',').slice(0, 2).join(','), municipio };
+}
+
+// Ruta en coche (OSRM, gratis): km, horas y la línea del camino.
+export async function rutaEnCoche(a, b) {
+  const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson`);
+  const d = await r.json();
+  if (d.code !== 'Ok') throw new Error('No encuentro ruta en coche entre esos dos sitios.');
+  return { km: d.routes[0].distance / 1000, horas: d.routes[0].duration / 3600, ruta: d.routes[0].geometry.coordinates.map(([lo, la]) => [la, lo]) };
 }
 
 export const certeza = (n) => `<span class="certeza ${n}">${{ alta: 'Seguro', media: 'Bastante seguro', baja: 'Compruébalo' }[n]}</span>`;

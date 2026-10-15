@@ -1,10 +1,11 @@
 // Inicio: batería y autonomía, «¿llego?», recordatorios y el gasto del mes.
-import { COCHE, TIPOS_VIA, ajustes, bateria, ponerBateria, cargas, hechos, marcarHecho, hoyISO, sesion, medido, tempManual, ponerTempManual, cambiarAjuste } from '../datos.js';
+import { COCHE, TIPOS_VIA, ajustes, bateria, ponerBateria, cargas, hechos, marcarHecho, hoyISO, sesion, medido, tempManual, ponerTempManual, cambiarAjuste, lugares } from '../datos.js';
 import { consumo, kmCon, pctTras, climaKwDe, resumen, pctTrasMinutos, horasAC, minutosDC, tramo } from '../calc.js';
-import { esc, num, euros, anillo, temperatura, aviso, hora, abrirHoja, cerrarHoja } from '../comun.js';
+import { esc, num, euros, anillo, temperatura, aviso, hora, abrirHoja, cerrarHoja, ubicacion, rutaEnCoche, duracion } from '../comun.js';
 import { abrirElegirCoche } from '../elegir-coche.js';
 
 let via = 'mixto';
+let llegoA = null; // sitio guardado elegido en «¿Llego?»
 let temp = null, tempReal = null;
 
 export function pintar(raiz) {
@@ -39,6 +40,8 @@ export function pintar(raiz) {
 
     <section class="tarjeta">
       <h2>¿Llego?</h2>
+      ${lugares().length ? `<div class="chips" id="llego-lugares" style="margin-bottom:10px">${lugares().map((l) => `<button class="chip" data-lugar="${esc(l.id)}">${esc(l.emoji || '📍')} ${esc(l.nombre)}</button>`).join('')}</div>`
+        : '<p class="muy-suave" style="margin:0 0 10px">Guarda tus sitios habituales (casa, trabajo, la de tu familia…) en <a href="#/ajustes">Ajustes</a> y aquí sale un botón para cada uno.</p>'}
       <div class="fila">
         <label class="campo" style="margin:0"><span>Kilómetros hasta allí</span>
           <div class="con-unidad"><input id="llego-km" type="number" inputmode="decimal" placeholder="Ej. 120"><i>km</i></div></label>
@@ -67,7 +70,24 @@ export function pintar(raiz) {
     raiz.querySelectorAll('#vias .chip').forEach((x) => x.classList.toggle('activo', x === c));
     actualizar(raiz);
   };
-  raiz.querySelector('#llego-km').oninput = () => actualizar(raiz);
+  raiz.querySelector('#llego-km').oninput = () => { llegoA = null; actualizar(raiz); };
+  // Botón de un sitio guardado: km por carretera desde donde estás.
+  raiz.querySelector('#llego-lugares')?.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-lugar]'); if (!b) return;
+    const l = lugares().find((x) => x.id === b.dataset.lugar); if (!l) return;
+    raiz.querySelectorAll('#llego-lugares .chip').forEach((x) => x.classList.toggle('activo', x === b));
+    const res = raiz.querySelector('#llego-res');
+    res.innerHTML = '<p class="suave" style="margin-top:10px">Mirando la distancia por carretera…</p>';
+    try {
+      const yo = await ubicacion();
+      if (!yo) throw new Error('No sé dónde estás: activa la ubicación o pon los km a mano.');
+      const r = await rutaEnCoche(yo, l.punto);
+      if (!raiz.querySelector('#llego-km')) return;
+      raiz.querySelector('#llego-km').value = Math.round(r.km);
+      llegoA = { ...l, horas: r.horas };
+      actualizar(raiz);
+    } catch (err) { res.innerHTML = `<p class="suave" style="margin-top:10px">${esc(err.message || 'Sin conexión')}</p>`; }
+  });
   raiz.querySelector('#llego-iv').onchange = () => actualizar(raiz);
 
   actualizar(raiz);
@@ -98,8 +118,10 @@ function actualizar(raiz) {
   const clase = llegada >= 15 ? '' : llegada >= 5 ? 'ambar' : 'rojo';
   const texto = llegada >= 15 ? `Sí, llegas con un ${Math.round(llegada)} %`
     : llegada >= 5 ? `Justito: llegarías con un ${Math.round(llegada)} %` : 'No llegas sin cargar';
-  res.innerHTML = `<div class="resultado ${clase}" style="margin-top:12px"><div class="grande">${texto}</div>
-    <p>${llegada >= 15 ? 'Con margen de sobra para imprevistos.' : llegada >= 5 ? 'Mejor para un rato a cargar por el camino o al llegar.' : `Necesitas unos ${Math.ceil(15 - llegada)} puntos más de batería. Mira la pestaña Viaje: te dice dónde parar.`}</p></div>`;
+  const destino = llegoA ? `<p class="muy-suave" style="margin:0 0 4px">${esc(llegoA.emoji || '📍')} ${esc(llegoA.nombre)}: ${num(+raiz.querySelector('#llego-km').value)} km por carretera, unas ${duracion(llegoA.horas * 60)}${+raiz.querySelector('#llego-iv').value === 2 ? ' (×2 ida y vuelta)' : ''}</p>` : '';
+  const viaje = llegoA && llegada < 15 ? `<a class="boton mini" style="margin-top:8px" href="#/viaje/${encodeURIComponent(llegoA.nombre)}">Ver dónde parar</a>` : '';
+  res.innerHTML = `<div class="resultado ${clase}" style="margin-top:12px">${destino}<div class="grande">${texto}</div>
+    <p>${llegada >= 15 ? 'Con margen de sobra para imprevistos.' : llegada >= 5 ? 'Mejor para un rato a cargar por el camino o al llegar.' : `Necesitas unos ${Math.ceil(15 - llegada)} puntos más de batería. Mira la pestaña Viaje: te dice dónde parar.`}</p>${viaje}</div>`;
 }
 
 // La temperatura se puede poner a mano (p. ej. para saber la autonomía mañana a primera hora).

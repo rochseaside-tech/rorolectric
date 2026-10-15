@@ -2,7 +2,7 @@
 // Con el mapa muy alejado solo salen los rápidos, para no llenarlo de puntos.
 // Filtros: atajos arriba (rápidos, gratis, tarjeta, favoritos) y el botón «Filtros» con todo lo demás.
 import { enZona, clasePin, abrirFicha, fechaLista, SERVICIOS, precioKwh, precioCorto } from '../cargadores.js';
-import { claveCargador, notaDe, notas, bateria, ajustes, medido } from '../datos.js';
+import { claveCargador, notaDe, notas, bateria, ajustes, medido, lugares } from '../datos.js';
 import { ubicacion, ultimaUbicacion, esc, num, abrirHoja, cerrarHoja, capaMapa, buscarSitio, aviso } from '../comun.js';
 import { distancia, kmCon, consumo } from '../calc.js';
 import { OPERADORES, operadorDe } from '../operadores.js';
@@ -129,10 +129,12 @@ function pintarAtajos(raiz) {
   const n = cuantos();
   const el = raiz.querySelector('#filtros');
   el.innerHTML = `<button class="chip ${n ? 'activo' : ''}" data-f="todos" style="flex:none">⚙︎ Filtros${n ? ` (${n})` : ''}</button>
-    <button class="chip ${verPrecio ? 'activo' : ''}" data-f="precio" style="flex:none">💶 Precios</button>
+    <button class="chip ${verPrecio ? 'activo' : ''}" data-f="precio" style="flex:none">💶 Precios</button>${lugares().map((l) => `<button class="chip" data-lugar="${esc(l.id)}" style="flex:none">${esc(l.emoji || "📍")} ${esc(l.nombre)}</button>`).join("")}
     ${ATAJOS.map(([k, t, activo]) => `<button class="chip ${activo() ? 'activo' : ''}" data-f="${k}" style="flex:none">${t}</button>`).join('')}
     <button class="chip ${verRango ? 'activo' : ''}" data-f="rango" style="flex:none">🔋 Hasta dónde llego</button>`;
   el.onclick = (e) => {
+    const l = e.target.closest('[data-lugar]');
+    if (l) { const x = lugares().find((y) => y.id === l.dataset.lugar); if (x && mapa) mapa.setView(x.punto, 14); return; }
     const b = e.target.closest('[data-f]'); if (!b) return;
     if (b.dataset.f === 'todos') { abrirFiltros(raiz); return; }
     if (b.dataset.f === 'rango') { verRango = !verRango; pintarAtajos(raiz); pintarRango(); return; }
@@ -167,13 +169,13 @@ function abrirFiltros(raiz) {
       ${chip('ccs', 1, 'CCS (rápida)', f.ccs)}${chip('tipo2', 1, 'Tipo 2 (lenta)', f.tipo2)}${chip('compatibles', 1, 'Ocultar los que no valen para mi coche', f.compatibles)}</div></label>
     <label class="campo"><span>Pagar</span><div class="chips">
       ${chip('gratis', 1, '🎁 Gratis', f.gratis)}${chip('tarjeta', 1, '💳 Tarjeta en el poste', f.tarjeta)}${chip('conPrecio', 1, '💶 Solo con precio', f.conPrecio)}${chip('sinClientes', 1, 'Ocultar «solo clientes»', f.sinClientes)}</div></label>
-    <label class="campo"><span>Horario y reserva</span><div class="chips">${chip('h24', 1, '🕒 Abierto 24 h', f.h24)}${chip('reservable', 1, '📅 Se puede reservar (solo lo publica Francia)', f.reservable)}</div></label>
+    <label class="campo"><span>Horario y reserva</span><div class="chips">${chip('h24', 1, '🕒 Abierto 24 h', f.h24)}${chip('reservable', 1, '📅 Se puede reservar', f.reservable)}</div></label>
     <label class="campo"><span>Para esperar mientras carga</span><div class="chips">
       ${Object.entries(SERVICIOS).map(([k, t]) => chip('servicios', k, t, f.servicios.includes(k))).join('')}</div></label>
     <label class="campo"><span>Empresa</span><select id="empresa"><option value="">Todas</option>
       ${OPERADORES.map((o) => `<option value="${o.id}" ${f.empresa === o.id ? 'selected' : ''}>${esc(o.nombre)}</option>`).join('')}</select></label>
     <label class="campo"><span>Mis cargadores</span><div class="chips">${chip('favoritos', 1, '★ Solo favoritos', f.favoritos)}</div></label>
-    <p class="muy-suave">«Gratis», «tarjeta», horario y servicios salen del registro oficial y de OpenStreetMap: si un cargador no los tiene apuntados, no aparece al filtrar. Para saber si está libre ahora, abre su ficha: lleva un enlace a REVE (Red Eléctrica). Si se puede reservar solo lo publica Francia.</p>
+    <p class="muy-suave">«Gratis», «tarjeta», horario y servicios salen del registro oficial y de OpenStreetMap: si un cargador no los tiene apuntados, no aparece al filtrar. Para saber si está libre ahora, abre su ficha: lleva un enlace a REVE (Red Eléctrica). «Se puede reservar» sale de REVE en España (se va completando estos días) y del registro oficial en Francia.</p>
     <div class="botones"><button class="boton" id="ver">Ver cargadores</button><button class="boton sec" id="limpiar">Quitar filtros</button></div>`, (caja) => {
     caja.onclick = (e) => {
       const b = e.target.closest('[data-grupo]');

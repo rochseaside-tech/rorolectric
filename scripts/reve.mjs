@@ -42,16 +42,17 @@ function guardarSitio(l, n) {
   const la = +l.coordinates?.latitude, lo = +l.coordinates?.longitude;
   if (!la || !lo) return;
   const enchufes = [];
-  let tarjeta = false;
+  let tarjeta = false, reservable = false;
   for (const e of l.evses || []) {
     if ((e.capabilities || []).some((c) => /CREDIT_CARD|DEBIT_CARD|CONTACTLESS/.test(c))) tarjeta = true;
+    if ((e.capabilities || []).includes('RESERVABLE')) reservable = true;
     for (const c of e.connectors || []) {
       enchufes.push([c.id, TIPO[c.standard] || '', Math.round((c.max_electric_power || 0) / 1000), /^DC/.test(c.power_type || '') ? 1 : 0]);
     }
   }
   sitios[l.id] = {
     la: +la.toFixed(5), lo: +lo.toFixed(5), nombre: l.name || '', empresa: l.cpo_name || '', marca: (l.owner || '').split(' - ')[0],
-    dir: [l.address, l.city].filter(Boolean).join(', '), h24: !!l.opening_times?.twentyfourseven, tarjeta, enchufes, v: n,
+    dir: [l.address, l.city].filter(Boolean).join(', '), h24: !!l.opening_times?.twentyfourseven, tarjeta, reservable, enchufes, v: n,
   };
 }
 
@@ -59,11 +60,12 @@ function guardarSitio(l, n) {
 function resumir(tarifas, hoy) {
   const vigentes = tarifas.filter((t) => (!t.end_date_time || t.end_date_time.slice(0, 10) >= hoy) && (!t.start_date_time || t.start_date_time.slice(0, 10) <= hoy));
   const kwh = [];
-  let hora = 0, fijo = 0, plaza = 0, plazaDesde = null;
+  let hora = 0, fijo = 0, plaza = 0, plazaDesde = null, reservable = 0;
   for (const t of vigentes.length ? vigentes : tarifas) {
     for (const el of t.elements || []) {
       const r = el.restrictions || {};
-      if (r.reservation) continue; // lo que cuesta reservar, no cargar
+      // Si tiene precio de reserva, es que se puede reservar (desde la app de la empresa); no es precio de cargar.
+      if (r.reservation) { reservable = 1; continue; }
       if ((r.end_date && r.end_date < hoy) || (r.start_date && r.start_date > hoy)) continue;
       for (const p of el.price_components || []) {
         const v = (+p.price || 0) * (1 + (+p.vat || 0) / 100);
@@ -78,9 +80,9 @@ function resumir(tarifas, hoy) {
       }
     }
   }
-  if (!kwh.length && !hora && !fijo) return null;
+  if (!kwh.length && !hora && !fijo && !reservable) return null;
   const r3 = (x) => Math.round(x * 1000) / 1000;
-  return [kwh.length ? r3(Math.min(...kwh)) : null, kwh.length ? r3(Math.max(...kwh)) : null, r3(hora), r3(fijo), r3(plaza), plazaDesde || 0];
+  return [kwh.length ? r3(Math.min(...kwh)) : null, kwh.length ? r3(Math.max(...kwh)) : null, r3(hora), r3(fijo), r3(plaza), plazaDesde || 0, reservable];
 }
 
 async function pedir(ruta, params) {

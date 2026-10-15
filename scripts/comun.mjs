@@ -116,7 +116,16 @@ export const pareceCodigo = (n) => !n || (/\d/.test(n) && !/\s/.test(n)) || /^[A
 const DIAS = { Mo: 'L', Tu: 'M', We: 'X', Th: 'J', Fr: 'V', Sa: 'S', Su: 'D', PH: 'festivos', off: 'cerrado' };
 const horarioEs = (h) => (h && h !== '24h' ? h.replace(/\b(Mo|Tu|We|Th|Fr|Sa|Su|PH|off)\b/g, (d) => DIAS[d]).replace(/;\s*/g, ' · ') : h);
 
+// «Pl. Del Dr. Robert, 08202 Sabadell,, Sabadell» → «Pl. Del Dr. Robert, 08202 Sabadell»
+function limpiarDir(d) {
+  const partes = String(d || '').split(',').map((x) => x.trim()).filter(Boolean);
+  const ultima = partes.at(-1);
+  if (partes.length > 1 && partes.slice(0, -1).some((x) => x.toLowerCase().includes(ultima.toLowerCase()))) partes.pop();
+  return partes.join(', ');
+}
+
 export function aFila(s) {
+  s.dir = limpiarDir(s.dir);
   s.operador = marcaDe(s.operador);
   if (pareceCodigo(s.nombre)) s.nombre = s.operador || 'Punto de recarga';
   else s.nombre = bonito(s.nombre.replace(/^repsol es, /i, 'Repsol · '));

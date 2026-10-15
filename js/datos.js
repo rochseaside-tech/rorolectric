@@ -146,6 +146,7 @@ function leer() {
     cargas: guardado.cargas || [],
     hechos: guardado.hechos || {},   // recordatorios marcados: { neumaticos: '2026-10-15' }
     notas: guardado.notas || {},
+    lugares: guardado.lugares || [], // sitios habituales de quien usa este móvil: { id, nombre, emoji, dir, punto: [lat, lon], municipio }
     sesion: guardado.sesion || null, // carga en curso: { inicio, de, a, kw, ac, precio, lugar, sitio }     // por cargador: { '41.5568,2.1022': { fav, nota, estado, fecha, nombre } }
   };
 }
@@ -210,11 +211,21 @@ export function guardarNota(c, cambios) {
   guardar();
 }
 
+// Sitios habituales («Casa», «Trabajo», «Casa de papá»…). Cada persona los pone en su móvil.
+export const lugares = () => estado.lugares;
+export function guardarLugar(l) {
+  const i = estado.lugares.findIndex((x) => x.id === l.id);
+  if (i >= 0) estado.lugares[i] = l; else estado.lugares.push({ ...l, id: l.id || String(Date.now()) });
+  guardar();
+}
+export function borrarLugar(id) { estado.lugares = estado.lugares.filter((x) => x.id !== id); guardar(); }
+export const lugarPorNombre = (t) => estado.lugares.find((l) => l.nombre.trim().toLowerCase() === String(t || '').trim().toLowerCase()) || null;
+
 export function exportar() { return JSON.stringify({ app: 'rorolectric', version: 1, ...estado }, null, 1); }
 export function importar(texto) {
   const d = JSON.parse(texto);
   if (d.app !== 'rorolectric') throw new Error('Este archivo no es una copia de ROROLECTRIC');
-  localStorage.setItem(CLAVE, JSON.stringify({ ajustes: d.ajustes, bateria: d.bateria, cargas: d.cargas, hechos: d.hechos, notas: d.notas }));
+  localStorage.setItem(CLAVE, JSON.stringify({ ajustes: d.ajustes, bateria: d.bateria, cargas: d.cargas, hechos: d.hechos, notas: d.notas, lugares: d.lugares }));
   estado = leer();
 }
 export function borrarTodo() { try { localStorage.removeItem(CLAVE); } catch { /* nada */ } estado = leer(); }

@@ -100,3 +100,18 @@ assert.ok(Math.abs(pe.total - 2150 * 9.81 * 1000 / 3.6e6 / 0.85) < 0.01 && pe.su
 const llano = planConCargadores(100, 60, 20, []), subida = planConCargadores(100, 60, 20, [], { perfil: pe.perfil });
 assert.ok(subida.llegada < llano.llegada - 8, `${subida.llegada} vs ${llano.llegada}`);
 console.log('Desnivel ✔');
+
+// Salud de la batería: 3 cargas de 20→80 % metiendo lo que corresponde a 60 kWh útiles → ~60 kWh.
+import { saludBateria } from './js/calc.js';
+const sc = [1, 2, 3].map((i) => ({ kwh: 60 * 0.6 / 0.9, desde: 20, hasta: 80, lugar: 'casa', id: String(i) }));
+const sb = saludBateria(sc, 68);
+assert.ok(sb.util > 55 && sb.util < 65 && sb.pct < 95, JSON.stringify(sb));
+assert.equal(saludBateria(sc.slice(0, 2), 68).util, undefined); // con 2 cargas no se atreve
+console.log('Salud de la batería ✔');
+
+// Viaje «más barato»: entre dos cargadores alcanzables elige el de menor precio; «más rápido», el más potente.
+const caro = { kmRuta: 200, desvio: 0, potencia: 300, precio: 0.79 }, barato = { kmRuta: 170, desvio: 0, potencia: 100, precio: 0.39 };
+const op = { llegarCon: 15, paradaEn: 10, cargarHasta: 80 };
+assert.equal(planConCargadores(400, 100, 18, [barato, caro], { ...op, criterio: 'rapido' }).paradas[0].cargador, caro);
+assert.equal(planConCargadores(400, 100, 18, [barato, caro], { ...op, criterio: 'barato', precioDe: (c) => c.precio }).paradas[0].cargador, barato);
+console.log('Viaje más barato ✔');

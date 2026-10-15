@@ -1,6 +1,74 @@
 // Ajustes: tarifa de luz, cargador de casa, consumo real, fechas para avisos, tema.
-import { COCHE, CARGADORES_CASA, TIPOS_VIA, CONSUMO_TIPICO, ajustes, cambiarAjuste, cambiarAjusteDe, borrarTodo, corregirCoche } from '../datos.js';
-import { campo, aviso, esc, num } from '../comun.js';
+import { COCHE, CARGADORES_CASA, TIPOS_VIA, CONSUMO_TIPICO, ajustes, cambiarAjuste, cambiarAjusteDe, borrarTodo, corregirCoche, lugares, guardarLugar, borrarLugar } from '../datos.js';
+import { campo, aviso, esc, num, buscarSitio, ubicacion } from '../comun.js';
+
+// «Mis sitios»: los sitios habituales de quien usa este móvil. Salen como botones en Coche («¿Llego?»), Viaje y Mapa.
+const EMOJIS = ['🏠', '💼', '👪', '👴', '🏋️', '🛒', '🏫', '🏖️', '⛰️', '📍'];
+const SUGERIDOS = [['🏠', 'Casa'], ['💼', 'Trabajo'], ['👪', 'Familia']];
+function pintarSitios(el, editando = null) {
+  const lista = lugares();
+  const e = editando || { emoji: '🏠', nombre: '', dir: '' };
+  el.innerHTML = `<h2>Mis sitios</h2>
+    <p class="suave">Tus sitios de siempre: casa, trabajo, la casa de tu familia… Salen como botones en «¿Llego?», en Viaje y en el Mapa. Se guardan solo en este móvil: cada persona pone los suyos en el suyo.</p>
+    ${lista.length ? `<ul class="lista">${lista.map((l) => `<li><span class="icono" style="font-size:20px">${esc(l.emoji || '📍')}</span>
+      <div class="cuerpo"><b>${esc(l.nombre)}</b><span>${esc(l.dir || '')}</span></div>
+      <div class="lado" style="display:flex;gap:6px"><button class="boton mini sec" type="button" data-editar="${esc(l.id)}">Cambiar</button><button class="boton mini sec" type="button" data-quitar="${esc(l.id)}" aria-label="Quitar">✕</button></div></li>`).join('')}</ul>` : ''}
+    <div style="margin-top:12px;padding:12px;border-radius:12px;background:var(--tarjeta2)">
+      <b style="display:block;margin-bottom:8px">${editando ? `Cambiar «${esc(editando.nombre)}»` : 'Añadir un sitio'}</b>
+      ${!editando && !lista.length ? `<div class="chips" id="sugeridos" style="margin-bottom:8px">${SUGERIDOS.map(([em, n]) => `<button type="button" class="chip" data-em="${em}" data-n="${n}">${em} ${n}</button>`).join('')}</div>` : ''}
+      <div class="chips" id="emojis" style="margin-bottom:8px">${EMOJIS.map((x) => `<button type="button" class="chip ${x === e.emoji ? 'activo' : ''}" data-emoji="${x}" style="font-size:18px;padding:4px 10px">${x}</button>`).join('')}</div>
+      <label class="campo"><span>Nombre</span><input id="s-nombre" type="text" value="${esc(e.nombre)}" placeholder="Ej. Casa, Casa de papá, Trabajo"></label>
+      <label class="campo"><span>Dirección o pueblo</span><input id="s-dir" type="text" value="${esc(editando?.buscado || '')}" placeholder="${esc(editando?.dir || 'Ej. Calle Mayor 5, Burgos')}"></label>
+      <div class="fila" style="gap:8px;flex-wrap:wrap">
+        <button class="boton" type="button" id="s-guardar" style="flex:1">${editando ? 'Guardar cambios' : 'Guardar sitio'}</button>
+        <button class="boton sec" type="button" id="s-aqui" style="flex:1">📍 Es donde estoy ahora</button>
+        ${editando ? '<button class="boton sec" type="button" id="s-cancelar">Cancelar</button>' : ''}
+      </div>
+    </div>`;
+  let emoji = e.emoji;
+  el.querySelector('#emojis').onclick = (ev) => {
+    const b = ev.target.closest('[data-emoji]'); if (!b) return;
+    emoji = b.dataset.emoji; el.querySelectorAll('#emojis .chip').forEach((x) => x.classList.toggle('activo', x === b));
+  };
+  el.querySelector('#sugeridos')?.addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-n]'); if (!b) return;
+    el.querySelector('#s-nombre').value = b.dataset.n; emoji = b.dataset.em;
+    el.querySelectorAll('#emojis .chip').forEach((x) => x.classList.toggle('activo', x.dataset.emoji === emoji));
+    el.querySelector('#s-dir').focus();
+  });
+  const guardarCon = (datos) => {
+    const nombre = el.querySelector('#s-nombre').value.trim();
+    if (!nombre) { aviso('Ponle un nombre'); return; }
+    if (lugares().some((l) => l.nombre.toLowerCase() === nombre.toLowerCase() && l.id !== editando?.id)) { aviso('Ya tienes un sitio con ese nombre'); return; }
+    guardarLugar({ ...(editando || {}), ...datos, nombre, emoji });
+    aviso(datos.dir ? `Guardado: ${datos.dir}. Si no es ahí, toca «Cambiar» y pon más detalle` : 'Sitio guardado'); pintarSitios(el);
+  };
+  el.querySelector('#s-guardar').onclick = async () => {
+    const dir = el.querySelector('#s-dir').value.trim();
+    if (!dir) { if (editando) guardarCon({}); else aviso('Pon la dirección o toca «Es donde estoy ahora»'); return; }
+    const b = el.querySelector('#s-guardar'); b.disabled = true; b.textContent = 'Buscando…';
+    try { const s = await buscarSitio(dir); guardarCon({ punto: s.punto, dir: s.nombre, municipio: s.municipio }); }
+    catch (err) { aviso(err.message); b.disabled = false; b.textContent = 'Guardar sitio'; }
+  };
+  el.querySelector('#s-aqui').onclick = async () => {
+    const p = await ubicacion({ forzar: true });
+    if (!p) { aviso('No me dejan ver dónde estás: activa la ubicación'); return; }
+    let municipio = '', dir = 'Donde estabas al guardarlo';
+    try {
+      const r = await (await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&accept-language=es&lat=${p[0]}&lon=${p[1]}`)).json();
+      const a = r.address || {};
+      municipio = a.city || a.town || a.village || a.municipality || '';
+      dir = [a.road && `${a.road}${a.house_number ? ' ' + a.house_number : ''}`, municipio].filter(Boolean).join(', ') || dir;
+    } catch { /* sin conexión: vale con el punto */ }
+    guardarCon({ punto: p, dir, municipio });
+  };
+  el.querySelector('#s-cancelar')?.addEventListener('click', () => pintarSitios(el));
+  el.querySelectorAll('[data-quitar]').forEach((b) => { b.onclick = () => {
+    if (!b.dataset.seguro) { b.dataset.seguro = '1'; b.textContent = '¿Seguro?'; return; }
+    borrarLugar(b.dataset.quitar); aviso('Sitio quitado'); pintarSitios(el);
+  }; });
+  el.querySelectorAll('[data-editar]').forEach((b) => { b.onclick = () => pintarSitios(el, lugares().find((l) => l.id === b.dataset.editar)); });
+}
 import { fechaLista, cargarTodos } from '../cargadores.js';
 import { abrirElegirCoche } from '../elegir-coche.js';
 import { esAndroid } from '../operadores.js';
@@ -14,6 +82,8 @@ export function pintar(raiz) {
       <div class="fila"><div><b style="font-size:17px">${esc(COCHE.nombre)}</b><div class="muy-suave">${num(COCHE.util, 1)} kWh útiles · ${COCHE.wltpKm} km oficiales · batería ${COCHE.quimica}</div></div>
         <button class="boton mini sec" id="cambiar-coche" style="flex:none">Cambiar</button></div>
     </section>
+
+    <section class="tarjeta" id="mis-sitios"></section>
     <form id="f">
     <section class="tarjeta">
       <h2>Luz de casa</h2>
@@ -85,7 +155,7 @@ export function pintar(raiz) {
     <section class="tarjeta">
       <h2>Lista de cargadores</h2>
       <p class="suave" id="lista-info">…</p>
-      <p class="muy-suave">Se actualiza sola cada noche con el registro oficial del Ministerio y OpenStreetMap. No tienes que hacer nada.</p>
+      <p class="muy-suave">Se actualiza sola cada noche: registro oficial del Ministerio, OpenStreetMap y precios y reservas de REVE (Red Eléctrica). Fuera de España: registro oficial de Francia y OpenStreetMap en Portugal y Andorra. No tienes que hacer nada.</p>
     </section>
 
     <section class="tarjeta">
@@ -102,6 +172,7 @@ export function pintar(raiz) {
     <button class="boton peligro" id="borrar" style="margin-bottom:20px">Borrar todos mis datos</button>`;
 
   raiz.querySelector('#cambiar-coche').onclick = () => abrirElegirCoche();
+  pintarSitios(raiz.querySelector('#mis-sitios'));
   raiz.querySelector('#avisos').onclick = (e) => {
     const b = e.target.closest('[data-aviso]'); if (!b) return;
     const k = b.dataset.aviso, v = !ajustes().avisos[k];

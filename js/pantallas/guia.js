@@ -1,5 +1,5 @@
 // Guía: lo que hay que saber de un eléctrico en España, con etiqueta de certeza en lo que no es seguro.
-import { COCHE } from '../datos.js';
+import { COCHE, lugares } from '../datos.js';
 import { OPERADORES, COMODINES, enlaceApp, nombreTienda } from '../operadores.js';
 import { minutosDC } from '../calc.js';
 import { num, certeza, esc } from '../comun.js';
@@ -96,6 +96,17 @@ export function pintar(raiz) {
         <li><b>Etiqueta CERO</b> de la DGT: entras en todas las zonas de bajas emisiones. En Barcelona y otras ciudades hay descuentos de aparcamiento regulado para los CERO: compruébalo en la de tu ciudad ${certeza('baja')}.</li>
       </ul>`)}
 
+    ${S('🏙️', 'Ventajas en tu ciudad', `
+      <label class="campo"><span>Ciudad</span><select id="ciudad">${Object.entries(CIUDADES).map(([k, x]) => `<option value="${k}" ${k === ciudadInicial() ? 'selected' : ''}>${x.nombre}</option>`).join('')}</select></label>
+      <div id="ciudad-info">${htmlCiudad(ciudadInicial())}</div>
+      <h3>En toda España</h3>
+      <ul>
+        <li><b>Zonas de bajas emisiones</b>: con la etiqueta CERO entras en todas, también los días de contaminación ${certeza('alta')}.</li>
+        <li><b>Impuesto de circulación</b>: la ley deja a cada ayuntamiento rebajarlo hasta un 75 % a los eléctricos. Casi todos lo hacen, pero muchas veces <b>hay que pedirlo</b>: no siempre se aplica solo ${certeza('media')}.</li>
+        <li><b>Aparcar en zona azul</b>: depende de cada ciudad, y varias han ido quitando la gratuidad (Barcelona en 2025, Sabadell en 2024) ${certeza('media')}.</li>
+      </ul>
+      <p class="muy-suave">Las ordenanzas cambian cada año. Compruébalo en la web de tu ayuntamiento antes de confiar en ello.</p>`)}
+
     ${S('🔧', 'Mantenimiento', `
       <ul>
         <li>Mucho menos que un gasolina: sin aceite, sin embrague, frenos que casi no se gastan.</li>
@@ -139,4 +150,42 @@ export function pintar(raiz) {
       <p class="muy-suave" style="margin-top:8px">Fuente: ${esc(COCHE.fuente)}</p>`)}
 
     <p class="muy-suave" style="text-align:center;margin-top:16px">Etiquetas: ${certeza('alta')} ${certeza('media')} ${certeza('baja')}</p>`;
+  raiz.querySelector('#ciudad').onchange = (e) => { raiz.querySelector('#ciudad-info').innerHTML = htmlCiudad(e.target.value); };
+}
+
+// Ventajas de cada ciudad (revisado en octubre de 2026 con las ordenanzas y la prensa local).
+const CIUDADES = {
+  sabadell: { nombre: 'Sabadell', claves: ['sabadell'], cosas: [
+    ['Impuesto de circulación', '<b>75 % menos durante 8 años</b> desde la matriculación, para los «Zero emissions». Pídelo en el Ajuntament si no te llega aplicado.', 'media'],
+    ['Zona blava', 'Desde el 1 de enero de 2024 los eléctricos <b>pagan como los demás</b>: se quitó la gratuidad.', 'media'],
+  ], fuente: ['Ajuntament de Sabadell', 'https://web.sabadell.cat/economia-i-finances/ordenances-fiscals-i-de-preus-publics'] },
+  barcelona: { nombre: 'Barcelona', claves: ['barcelona'], cosas: [
+    ['Àrea blava y verda', 'Desde 2025 los CERO <b>pagan la mitad</b>: unos 1,15-1,25 €/h en zona azul y 1,40-1,50 €/h en verde (precios de 2025). Antes era gratis.', 'media'],
+    ['Días de contaminación', 'Los CERO no pagan el recargo de 2 €/h de la zona verde.', 'media'],
+    ['Impuesto de circulación', 'Hay rebaja para eléctricos, pero no he podido confirmar cuánto en 2026: mira las ordenanzas fiscales.', 'baja'],
+  ], fuente: ['3Cat', 'https://www.3cat.cat/3catinfo/quant-costa-larea-verda-i-blava-de-barcelona-el-2025-adeu-a-la-gratuitat-dels-0-emissions/noticia/3333197/'] },
+  madrid: { nombre: 'Madrid', claves: ['madrid'], cosas: [
+    ['SER (zona azul y verde)', '<b>Gratis y sin límite de tiempo</b> para los coches «0 emisiones» de la DGT. En el parquímetro o la app sale «exento».', 'media'],
+    ['Madrid Central y ZBE', 'Entras siempre.', 'alta'],
+    ['Impuesto de circulación', 'Hay rebaja para eléctricos, pero no he podido confirmar cuánto en 2026: mira las ordenanzas fiscales.', 'baja'],
+  ], fuente: ['Carwow', 'https://www.carwow.es/noticias/5764/etiqueta-cero-aparcar-gratis-madrid-zona-ser'] },
+  burgos: { nombre: 'Burgos', claves: ['burgos'], cosas: [
+    ['Impuesto de circulación', '<b>Hasta un 75 % menos</b> con la etiqueta CERO (Ordenanza 504). <b>Hay que pedirlo</b>: en la Oficina Virtual Tributaria o en las oficinas BAC de Plaza Mayor o Gamonal-Capiscol (con cita).', 'media'],
+    ['ORA', 'No he encontrado ningún descuento para eléctricos: pregunta en el Ayuntamiento.', 'baja'],
+  ], fuente: ['Ayuntamiento de Burgos', 'https://www.aytoburgos.es/-/ordenanza-numero-504-ordenanza-fiscal-reguladora-del-impuesto-sobre-vehiculos-de-traccion-mecanica'] },
+  otra: { nombre: 'Otra ciudad', claves: [], cosas: [
+    ['Impuesto de circulación', 'Busca «ordenanza fiscal impuesto vehículos» y el nombre de tu ayuntamiento: mira si hay bonificación para eléctricos y si hay que pedirla.', 'media'],
+    ['Zona azul', 'Busca la ordenanza de aparcamiento regulado de tu ciudad: algunas dejan aparcar gratis o con descuento a los CERO.', 'baja'],
+  ] },
+};
+// La de «Casa» (Ajustes → Mis sitios) si es una de las que conozco.
+function ciudadInicial() {
+  const casa = lugares().find((l) => /casa|home/i.test(l.nombre) || l.emoji === '🏠') || lugares()[0];
+  const m = `${casa?.municipio || ''} ${casa?.dir || ''}`.toLowerCase();
+  return Object.keys(CIUDADES).find((k) => CIUDADES[k].claves.some((c) => m.includes(c))) || 'sabadell';
+}
+function htmlCiudad(k) {
+  const c = CIUDADES[k];
+  return `<ul>${c.cosas.map(([t, v, n]) => `<li><b>${t}</b>: ${v} ${certeza(n)}</li>`).join('')}</ul>
+    ${c.fuente ? `<p class="muy-suave">Fuente: <a href="${c.fuente[1]}" target="_blank" rel="noopener">${esc(c.fuente[0])}</a></p>` : ''}`;
 }
