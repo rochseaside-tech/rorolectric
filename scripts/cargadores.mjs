@@ -66,7 +66,14 @@ function leerOficial(xml) {
       e.n++; e.kw = Math.max(e.kw, kw < 1000 ? kw : 0); // hay algún valor en W mal puesto
     }
     const puntos = (b.match(/<egi:refillPoint\b/g) || []).length;
-    sitios.push({ lat, lon, nombre, operador, dir: [dir, muni].filter(Boolean).join(', '), horario: horario(uno(b, /<fac:label>([^<]*)/)), pago, enchufes, puntos, fuente: 'm' });
+    // Qué hay en el sitio: r = restaurante o cafetería, s = tienda o súper, g = gasolinera, h = hotel, p = parking cubierto
+    const servicios = new Set();
+    for (const f of b.matchAll(/<fac:serviceFacilityType>([^<]+)/g)) {
+      const t = { restaurant: 'r', cafe: 'r', foodShopping: 's', shop: 's', petrolStation: 'g', hotel: 'h' }[f[1]];
+      if (t) servicios.add(t);
+    }
+    if (uno(b, /<egi:typeOfSite>([^<]+)/) === 'inBuilding') servicios.add('p');
+    sitios.push({ lat, lon, nombre, operador, dir: [dir, muni].filter(Boolean).join(', '), horario: horario(uno(b, /<fac:label>([^<]*)/)), pago, enchufes, puntos, servicios, fuente: 'm' });
   }
   return sitios;
 }
@@ -106,6 +113,7 @@ function leerOsm(els) {
       dir: [t['addr:street'] && `${t['addr:street']} ${t['addr:housenumber'] || ''}`.trim(), t['addr:city']].filter(Boolean).join(', '),
       horario: t.opening_hours === '24/7' ? '24h' : (t.opening_hours || ''), pago, enchufes,
       puntos: parseInt(t.capacity, 10) || 0, kwSitio: Math.round(kwOsm(t['charging_station:output'])), fuente: 'o',
+      servicios: new Set(t.covered === 'yes' || t.location === 'underground' || t.parking === 'underground' ? ['p'] : []),
     });
   }
   return sitios;
@@ -141,6 +149,7 @@ function juntar(oficiales, osm) {
     const igual = vecinos(rejilla, s, 40).find((o) => o.operador === s.operador);
     if (igual) {
       sumarEnchufes(igual.enchufes, s.enchufes); igual.puntos += s.puntos; igual.pago |= s.pago;
+      for (const x of s.servicios) igual.servicios.add(x);
       if (s.nombre.length < igual.nombre.length) igual.nombre = s.nombre;
       continue;
     }
@@ -156,6 +165,7 @@ function juntar(oficiales, osm) {
       m.pago |= o.pago & (GRATIS | SIN_REGISTRO | CLIENTES | TARJETA);
       if (!Object.keys(m.enchufes).length) m.enchufes = o.enchufes;
       if (!m.horario && o.horario) m.horario = o.horario;
+      for (const x of o.servicios) m.servicios.add(x);
       m.fuente = 'mo'; completados++;
       continue;
     }
@@ -184,7 +194,7 @@ if (oficiales.length < 5000) throw new Error(`El registro oficial trae muy pocos
 const osm = leerOsm(await descargarOsm());
 const { sitios, nuevos, completados } = juntar(oficiales, osm);
 
-// Formato compacto: [lat, lon, nombre, operador, kWmax, enchufes, pago, horario, dirección, puntos, fuente]
+// Formato compacto: [lat, lon, nombre, operador, kWmax, enchufes, pago, horario, dirección, puntos, fuente, servicios]
 // enchufes: «C2:150,T4:22» = 2 CCS de hasta 150 kW y 4 Tipo 2 de 22 kW.
 // Nombres legales → marca que se reconoce («REPSOL SOLUCIONES ENERGÉTICAS SA» → «Repsol»).
 const MARCAS = [
@@ -214,7 +224,7 @@ const filas = sitios.map((s) => {
   if (s.nombre.toLowerCase().includes(s.operador.toLowerCase())) s.operador = '';
   const kw = Math.max(s.kwSitio || 0, ...Object.values(s.enchufes).map((e) => e.kw), 0);
   const enchufes = Object.entries(s.enchufes).map(([t, e]) => `${t}${e.n}${e.kw ? ':' + e.kw : ''}`).join(',');
-  return [+s.lat.toFixed(5), +s.lon.toFixed(5), s.nombre, s.operador === s.nombre ? '' : s.operador, kw, enchufes, s.pago, s.horario, s.dir, s.puntos, s.fuente];
+  return [+s.lat.toFixed(5), +s.lon.toFixed(5), s.nombre, s.operador === s.nombre ? '' : s.operador, kw, enchufes, s.pago, s.horario, s.dir, s.puntos, s.fuente, [...s.servicios].sort().join('')];
 });
 const fecha = (xml.match(/<com:publicationTime>([^<]+)/) || [])[1]?.slice(0, 10) || new Date().toISOString().slice(0, 10);
 await writeFile(SALIDA, JSON.stringify({ fecha, total: filas.length, d: filas }));

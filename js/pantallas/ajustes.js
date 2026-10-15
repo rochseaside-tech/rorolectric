@@ -1,12 +1,19 @@
 // Ajustes: tarifa de luz, cargador de casa, consumo real, fechas para avisos, tema.
-import { CARGADORES_CASA, TIPOS_VIA, CONSUMO_TIPICO, ajustes, cambiarAjuste, cambiarAjusteDe, borrarTodo } from '../datos.js';
-import { campo, aviso, esc } from '../comun.js';
+import { COCHE, CARGADORES_CASA, TIPOS_VIA, CONSUMO_TIPICO, ajustes, cambiarAjuste, cambiarAjusteDe, borrarTodo } from '../datos.js';
+import { campo, aviso, esc, num } from '../comun.js';
 import { fechaLista, cargarTodos } from '../cargadores.js';
+import { abrirElegirCoche } from '../elegir-coche.js';
+import { esAndroid } from '../operadores.js';
 
 export function pintar(raiz) {
   const a = ajustes();
   raiz.innerHTML = `
     <div class="titulo-pantalla"><h1>Ajustes</h1></div>
+    <section class="tarjeta">
+      <h2>Tu coche</h2>
+      <div class="fila"><div><b style="font-size:17px">${esc(COCHE.nombre)}</b><div class="muy-suave">${num(COCHE.util, 1)} kWh útiles · ${COCHE.wltpKm} km oficiales · batería ${COCHE.quimica}</div></div>
+        <button class="boton mini sec" id="cambiar-coche" style="flex:none">Cambiar</button></div>
+    </section>
     <form id="f">
     <section class="tarjeta">
       <h2>Luz de casa</h2>
@@ -65,14 +72,25 @@ export function pintar(raiz) {
     </section>
 
     <section class="tarjeta">
-      <h2>Instalar en el iPhone</h2>
+      <h2>Instalar en el móvil</h2>
+      ${esAndroid() ? `<button class="boton ${window.instalarApp ? '' : 'oculto'}" id="instalar" style="margin-bottom:12px">Instalar ROROLECTRIC</button>
       <ol class="suave" style="padding-left:20px;margin:0">
+        <li>Abre esta página en <b>Chrome</b>.</li><li>Menú <b>⋮</b> (arriba a la derecha).</li><li><b>Instalar aplicación</b> o <b>Añadir a pantalla de inicio</b>.</li>
+      </ol>` : `<ol class="suave" style="padding-left:20px;margin:0">
         <li>Abre esta página en <b>Safari</b>.</li><li>Botón <b>Compartir</b> (el cuadrado con la flecha).</li><li><b>Añadir a pantalla de inicio</b>.</li>
       </ol>
+      <p class="muy-suave" style="margin-top:8px">¿Android? En Chrome: menú ⋮ → Instalar aplicación.</p>`}
     </section>
 
     <button class="boton peligro" id="borrar" style="margin-bottom:20px">Borrar todos mis datos</button>`;
 
+  raiz.querySelector('#cambiar-coche').onclick = () => abrirElegirCoche();
+  raiz.querySelector('#instalar')?.addEventListener('click', async () => {
+    window.instalarApp.prompt();
+    await window.instalarApp.userChoice;
+    window.instalarApp = null;
+    raiz.querySelector('#instalar').classList.add('oculto');
+  });
   const f = raiz.querySelector('#f');
   f.onchange = (e) => {
     const { name, value, type } = e.target;

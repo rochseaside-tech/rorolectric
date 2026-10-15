@@ -1,29 +1,80 @@
-// datos.js — ficha del coche y lo que se guarda en el móvil.
-// Ficha: catálogo oficial Changan España (julio 2026), versión Pro.
+// datos.js — fichas de los coches y lo que se guarda en el móvil.
+// Deepal S05: catálogo oficial Changan España (julio 2026).
+// Tesla Model Y: bases de datos de coches eléctricos (EVKX, InsideEVs); batería útil y curvas, aproximadas.
 // Todo lo marcado «estimado» es cálculo nuestro, no dato del fabricante.
 
-export const COCHE = {
-  nombre: 'Deepal S05 Pro',
-  bateria: 68.8,          // kWh, catálogo
-  util: 67,               // kWh utilizables (estimado; el fabricante no lo publica)
-  quimica: 'LFP',
-  wltpKm: 485,
-  wltpConsumo: 15.9,      // kWh/100 km, catálogo
-  acMax: 11,              // kW, carga en alterna (casa, calle lenta)
-  dcMax: 200,             // kW, carga rápida
-  min30a80: 15,           // minutos, catálogo
-  v2l: 6,                 // kW
-  potencia: 200, par: 290, aceleracion: 7.5,
-  largo: 4598, ancho: 1900, alto: 1600, batalla: 2880,
-  maletero: 492, frunk: 159, peso: 1940, pesoMax: 2370, remolque: 1600,
-  llanta: '18"', traccion: 'Trasera',
-  garantia: '7 años / 160.000 km',
-  garantiaMotor: '8 años / 200.000 km',
-};
+const CURVA_DEEPAL = [[50, 185], [80, 110], [90, 55], [101, 25]];
+const CURVA_TESLA_LFP = [[30, 165], [50, 130], [80, 80], [90, 40], [101, 20]];
+const CURVA_TESLA_NMC = [[20, 245], [40, 185], [60, 125], [80, 75], [90, 40], [101, 20]];
 
-// Consumo real típico (kWh/100 km) a 15-25 °C. Estimado para un SUV de este tamaño
-// y peso; la app usa el tuyo en cuanto lo apuntas en Ajustes.
-export const CONSUMO_TIPICO = { ciudad: 14.5, mixto: 17.5, autovia110: 19, autovia120: 21 };
+const S05 = {
+  marca: 'Deepal', corto: 'S05', app: 'MyChangan',
+  bateria: 68.8, util: 67, quimica: 'LFP', wltpKm: 485, wltpConsumo: 15.9,
+  acMax: 11, dcMax: 200, min30a80: 15, v2l: 6, bombaCalor: true,
+  potencia: '200 kW', par: '290 Nm', aceleracion: 7.5,
+  largo: 4598, ancho: 1900, alto: 1600, maletero: 492, frunk: 159, peso: 1940, remolque: 1600,
+  llanta: '18"', traccion: 'Trasera',
+  garantia: '7 años / 160.000 km', garantiaMotor: '8 años / 200.000 km',
+  consumo: { ciudad: 14.5, mixto: 17.5, autovia110: 19, autovia120: 21 },
+  curva: CURVA_DEEPAL, fuente: 'Catálogo oficial Changan España, julio 2026.',
+  notas: [],
+};
+const MY = {
+  marca: 'Tesla', corto: 'Model Y', app: 'Tesla', supercargador: true,
+  acMax: 11, v2l: 0, bombaCalor: true, garantia: '4 años / 80.000 km',
+  fuente: 'Bases de datos de coches eléctricos (EVKX, InsideEVs). Batería útil y tiempos de carga aproximados.',
+  notas: ['El navegador del coche planifica las paradas en Supercargadores y calienta la batería antes de llegar: úsalo en viajes.'],
+};
+const MY_LFP = { ...MY, quimica: 'LFP', curva: CURVA_TESLA_LFP, garantiaBateria: '8 años / 160.000 km', consumo: { ciudad: 13.5, mixto: 15.5, autovia110: 17, autovia120: 19 } };
+const MY_NMC = { ...MY, quimica: 'NMC', dcMax: 250, curva: CURVA_TESLA_NMC, garantiaBateria: '8 años / 192.000 km', consumo: { ciudad: 14.5, mixto: 16.5, autovia110: 18, autovia120: 20 } };
+const MY_PERF = { ...MY_NMC, consumo: { ciudad: 15, mixto: 17.5, autovia110: 19, autovia120: 21.5 } };
+
+export const MODELOS = {
+  s05pro: { ...S05, nombre: 'Deepal S05 Pro', notas: ['La versión Pro no lleva asientos ni volante calefactados: pon el clima antes de salir.'] },
+  s05max: { ...S05, nombre: 'Deepal S05 Max', llanta: '20"' },
+  s05maxawd: { ...S05, nombre: 'Deepal S05 Max AWD', wltpKm: 445, wltpConsumo: 17.5, potencia: '200 + 120 kW', par: '290 + 212 Nm', aceleracion: 5.5,
+    peso: 2040, frunk: 152, llanta: '20"', traccion: '4x4', consumo: { ciudad: 15.5, mixto: 18.8, autovia110: 20.5, autovia120: 22.5 } },
+  my_rwd_22: { ...MY_LFP, nombre: 'Tesla Model Y RWD (2022-2024)', bateria: 60, util: 57.5, wltpKm: 455, dcMax: 170, traccion: 'Trasera' },
+  my_lr_22: { ...MY_NMC, nombre: 'Tesla Model Y Gran Autonomía (2022-2024)', bateria: 78, util: 75, wltpKm: 533, traccion: 'Total' },
+  my_perf_22: { ...MY_PERF, nombre: 'Tesla Model Y Performance (2022-2024)', bateria: 78, util: 75, wltpKm: 514, traccion: 'Total' },
+  my_std_25: { ...MY_LFP, nombre: 'Tesla Model Y Standard (2025 o posterior)', bateria: 64, util: 60.5, wltpKm: 534, dcMax: 175, traccion: 'Trasera' },
+  my_rwd_25: { ...MY_LFP, nombre: 'Tesla Model Y RWD (2025 o posterior)', bateria: 62.5, util: 60, wltpKm: 500, dcMax: 175, traccion: 'Trasera' },
+  my_lrrwd_25: { ...MY_NMC, nombre: 'Tesla Model Y Gran Autonomía RWD (2025 o posterior)', bateria: 78.4, util: 75, wltpKm: 622, traccion: 'Trasera',
+    consumo: { ciudad: 13.5, mixto: 15.5, autovia110: 17, autovia120: 19 } },
+  my_lrawd_25: { ...MY_NMC, nombre: 'Tesla Model Y Gran Autonomía AWD (2025 o posterior)', bateria: 78.4, util: 75, wltpKm: 586, traccion: 'Total' },
+  my_perf_25: { ...MY_PERF, nombre: 'Tesla Model Y Performance (2025 o posterior)', bateria: 82, util: 79, wltpKm: 580, traccion: 'Total' },
+};
+export const GRUPOS_MODELOS = [
+  ['Changan Deepal S05', ['s05pro', 's05max', 's05maxawd']],
+  ['Tesla Model Y', ['my_rwd_22', 'my_lr_22', 'my_perf_22', 'my_std_25', 'my_rwd_25', 'my_lrrwd_25', 'my_lrawd_25', 'my_perf_25']],
+];
+
+// El coche elegido. Es un objeto vivo: al cambiar de coche se rellena otra vez y todas las
+// pantallas y cuentas lo ven al momento. Sin coche elegido, se calcula como un S05 Pro.
+export const COCHE = {};
+// Consumo real típico (kWh/100 km) a 15-25 °C. Estimado; la app usa el tuyo en cuanto lo apuntas en Ajustes.
+export const CONSUMO_TIPICO = {};
+// «Otro coche»: con 4 datos (batería, autonomía oficial, carga en casa y rápida) se estima el resto.
+export function modeloManual(m = {}) {
+  const util = +m.util || 60, wltp = +m.wltpKm || 450, dc = +m.dcMax || 120;
+  const mixto = Math.round(util / (wltp * 0.8) * 1000) / 10; // en la vida real se hace ~80 % de la cifra oficial
+  return {
+    marca: m.marca || '', corto: m.nombre || 'tu coche', nombre: m.nombre || 'Mi coche eléctrico', app: m.app || 'la app oficial de tu marca',
+    bateria: util, util, quimica: m.quimica || 'NMC', wltpKm: wltp, acMax: +m.acMax || 11, dcMax: dc, v2l: 0, manual: true,
+    consumo: { ciudad: +(mixto * 0.83).toFixed(1), mixto, autovia110: +(mixto * 1.09).toFixed(1), autovia120: +(mixto * 1.2).toFixed(1) },
+    curva: [[50, dc * 0.9], [80, dc * 0.55], [90, dc * 0.3], [101, dc * 0.12]],
+    fuente: 'Datos que pusiste tú; el resto (consumo y curva de carga) es una estimación.', notas: [],
+  };
+}
+function ponerModelo(id, manual) {
+  for (const k of Object.keys(COCHE)) delete COCHE[k];
+  if (id === 'otro') Object.assign(COCHE, modeloManual(manual), { id });
+  else Object.assign(COCHE, MODELOS[id] || MODELOS.s05pro, { id: MODELOS[id] ? id : 's05pro' });
+  Object.assign(CONSUMO_TIPICO, COCHE.consumo);
+}
+// LFP: cargar al 100 % está bien (y una vez por semana, recomendado). NMC: 80 % en el día a día.
+export const objetivoRecomendado = () => (COCHE.quimica === 'LFP' ? 100 : 80);
+
 export const TIPOS_VIA = [
   ['ciudad', 'Ciudad'], ['mixto', 'Mixto'], ['autovia110', 'Autovía 110'], ['autovia120', 'Autovía 120'],
 ];
@@ -36,11 +87,12 @@ export const CARGADORES_CASA = [
 ];
 
 const AJUSTES_BASE = {
+  coche: null,                // id de MODELOS; null = aún no lo ha elegido
   tarifa: 'pvpc',             // 'pvpc' | 'fija' | 'tramos'
   precioFijo: 0.15,           // €/kWh con impuestos
   tramos: { punta: 0.24, llano: 0.16, valle: 0.10 },
   cargadorCasa: 7.4,
-  objetivoCasa: 100,          // LFP: cargar al 100 % está bien
+  objetivoCasa: 100,
   consumoReal: { ciudad: null, mixto: null, autovia110: null, autovia120: null },
   precioRapida: 0.49,         // €/kWh en carga rápida de calle
   precioLenta: 0.35,
@@ -60,6 +112,9 @@ let estado = leer();
 function leer() {
   let guardado = {};
   try { guardado = JSON.parse(localStorage.getItem(CLAVE)) || {}; } catch { /* sin almacenamiento */ }
+  // Quien ya la usaba antes de poder elegir coche tenía el S05 Pro.
+  if (guardado.ajustes && !guardado.ajustes.coche) guardado.ajustes.coche = 's05pro';
+  ponerModelo(guardado.ajustes?.coche, guardado.ajustes?.cocheManual);
   return {
     ajustes: { ...AJUSTES_BASE, ...(guardado.ajustes || {}),
       tramos: { ...AJUSTES_BASE.tramos, ...(guardado.ajustes?.tramos || {}) },
@@ -77,6 +132,16 @@ function guardar() {
 
 export const ajustes = () => estado.ajustes;
 export function cambiarAjuste(clave, valor) { estado.ajustes[clave] = valor; guardar(); }
+export function elegirCoche(id, manual = null) {
+  const antes = COCHE.quimica, primeraVez = !estado.ajustes.coche;
+  estado.ajustes.coche = id;
+  if (manual) estado.ajustes.cocheManual = manual;
+  ponerModelo(id, estado.ajustes.cocheManual);
+  // Al cambiar de tipo de batería, el «cargar hasta» de casa pasa al recomendado; el consumo apuntado era de otro coche.
+  if (primeraVez || antes !== COCHE.quimica) estado.ajustes.objetivoCasa = objetivoRecomendado();
+  if (!primeraVez) for (const k of Object.keys(estado.ajustes.consumoReal)) estado.ajustes.consumoReal[k] = null;
+  guardar();
+}
 export function cambiarAjusteDe(grupo, clave, valor) { estado.ajustes[grupo][clave] = valor; guardar(); }
 
 export const bateria = () => estado.bateria;

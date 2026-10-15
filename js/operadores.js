@@ -38,4 +38,12 @@ export const COMODINES = [
 
 export const operadorDe = (...textos) => OPERADORES.find((o) => textos.some((t) => o.re.test(t || ''))) || null;
 
-export const enlaceApp = (app) => `itms-apps://search.itunes.apple.com/WebObjects/MZSearch.woa/wa/search?media=software&term=${encodeURIComponent(app)}`;
+// iPhone → App Store; Android → Google Play; ordenador → búsqueda normal.
+export const esAndroid = () => /android/i.test(navigator.userAgent);
+export const esIphone = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+export const nombreTienda = () => (esAndroid() ? 'Google Play' : 'App Store');
+export function enlaceApp(app) {
+  if (esAndroid()) return `https://play.google.com/store/search?q=${encodeURIComponent(app)}&c=apps`;
+  if (esIphone()) return `itms-apps://search.itunes.apple.com/WebObjects/MZSearch.woa/wa/search?media=software&term=${encodeURIComponent(app)}`;
+  return `https://www.google.com/search?q=${encodeURIComponent(app + ' app')}`;
+}

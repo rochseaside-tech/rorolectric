@@ -2,6 +2,7 @@
 import { COCHE, TIPOS_VIA, ajustes, bateria, ponerBateria, cargas, hechos, marcarHecho, hoyISO } from '../datos.js';
 import { consumo, kmCon, pctTras, factorTemperatura, resumen } from '../calc.js';
 import { esc, num, euros, anillo, temperatura, aviso } from '../comun.js';
+import { abrirElegirCoche } from '../elegir-coche.js';
 
 let via = 'mixto';
 let temp = null;
@@ -19,6 +20,7 @@ export function pintar(raiz) {
         ${TIPOS_VIA.map(([k, t]) => `<button class="chip ${k === via ? 'activo' : ''}" data-via="${k}">${t}</button>`).join('')}
       </div>
       <div class="tiempo-chip" id="tiempo">🌡️ mirando el tiempo…</div>
+      <div><button class="tiempo-chip" id="mi-coche" style="border:0;font:inherit;font-size:13px;cursor:pointer">🚗 ${esc(COCHE.nombre)} · cambiar</button></div>
     </section>
 
     <section class="tarjeta">
@@ -37,10 +39,11 @@ export function pintar(raiz) {
 
     <a class="tarjeta" href="#/guia" style="display:flex;gap:14px;align-items:center;text-decoration:none;color:inherit">
       <span style="font-size:34px">📘</span>
-      <span style="flex:1"><b style="display:block;font-size:17px">Guía de tu S05</b><span class="suave" style="font-size:14px">Qué apps necesitas de verdad, cómo cargar, pagar sin apps, ayudas…</span></span>
+      <span style="flex:1"><b style="display:block;font-size:17px">Guía de tu ${esc(COCHE.corto)}</b><span class="suave" style="font-size:14px">Qué apps necesitas de verdad, cómo cargar, pagar sin apps, ayudas…</span></span>
       <span style="font-size:24px;color:var(--texto3)">›</span>
     </a>`;
 
+  raiz.querySelector('#mi-coche').onclick = () => abrirElegirCoche();
   const desliza = raiz.querySelector('#desliza');
   desliza.oninput = () => { raiz.querySelector('#pct').innerHTML = `${desliza.value}<small>%</small>`; raiz.querySelector('#anillo svg').outerHTML = anillo(+desliza.value); actualizar(raiz); };
   desliza.onchange = () => { ponerBateria(+desliza.value); pintarRecordatorios(raiz); };
@@ -96,7 +99,7 @@ function pintarRecordatorios(raiz) {
 
   // LFP: una carga al 100 % a la semana para que el coche calcule bien el %.
   const ultimo100 = [h.cien, ...cargas().filter((c) => +c.hasta >= 100).map((c) => c.fecha)].filter(Boolean).sort().at(-1);
-  if (!ultimo100 || dias(ultimo100) <= -7) lista.push({ icono: '💯', clave: 'cien', titulo: 'Carga al 100 % esta semana',
+  if (COCHE.quimica === 'LFP' && (!ultimo100 || dias(ultimo100) <= -7)) lista.push({ icono: '💯', clave: 'cien', titulo: 'Carga al 100 % esta semana',
     texto: 'Tu batería es LFP: una vez a la semana al 100 % para que el % del coche no se descuadre.' });
 
   if (!h.neumaticos || dias(h.neumaticos) <= -30) lista.push({ icono: '🛞', clave: 'neumaticos', titulo: 'Mira la presión de las ruedas',

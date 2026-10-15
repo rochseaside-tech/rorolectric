@@ -1,5 +1,5 @@
 // Viaje: ruta y paradas en cargadores rápidos REALES de la ruta (como ABRP, pero con la lista oficial).
-import { TIPOS_VIA, ajustes, bateria, claveCargador } from '../datos.js';
+import { COCHE, TIPOS_VIA, ajustes, bateria, claveCargador } from '../datos.js';
 import { consumo, planViaje, planConCargadores, muestrearRuta, cargadoresEnRuta } from '../calc.js';
 import { enZona, cargarTodos, htmlPopup, enlazarFichas } from '../cargadores.js';
 import { esc, num, duracion, ubicacion, temperatura, campo, aviso } from '../comun.js';
@@ -98,8 +98,8 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
         </div></li>`).join('')}</ul>
       <p class="muy-suave" style="margin-top:8px">No sé si están libres ahora mismo (ninguna fuente gratuita lo publica). Por eso siempre te dejo margen para llegar al siguiente.</p></section>` : ''}
     <section class="tarjeta"><h2>Antes de salir</h2><ul class="lista">
-      <li><span class="icono">🔋</span><div class="cuerpo"><b>Sal al 100 % si puedes</b><span>Tu batería LFP lo aguanta bien y te ahorras paradas.</span></div></li>
-      <li><span class="icono">❄️</span><div class="cuerpo"><b>Con frío, clima puesto mientras está enchufado</b><span>Con la app MyChangan, 20 min antes de salir: calienta con la luz de casa, no con tu batería.</span></div></li>
+      <li><span class="icono">🔋</span><div class="cuerpo"><b>Sal al 100 %</b><span>${COCHE.quimica === 'LFP' ? 'Tu batería LFP lo aguanta bien y te ahorras paradas.' : 'Para un viaje sí: carga al 100 % justo antes de salir (no lo dejes así días).'}</span></div></li>
+      <li><span class="icono">❄️</span><div class="cuerpo"><b>Con frío, clima puesto mientras está enchufado</b><span>Con la app ${COCHE.app}, 20 min antes de salir: calienta con la luz de casa, no con tu batería.</span></div></li>
       <li><span class="icono">💳</span><div class="cuerpo"><b>Para pagar: tarjeta, QR o una app comodín</b><span>Toca un cargador en el mapa: te digo cómo se paga en ese.</span></div></li>
     </ul></section>`;
 

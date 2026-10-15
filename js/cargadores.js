@@ -4,13 +4,14 @@
 // Ojo: ninguna fuente gratuita dice si están libres ahora ni el precio de hoy.
 import { esc, num, abrirHoja, cerrarHoja, aviso, fechaBonita } from './comun.js';
 import { distancia } from './calc.js';
-import { claveCargador, notaDe, guardarNota, cargas, bateria } from './datos.js';
-import { operadorDe, enlaceApp } from './operadores.js';
+import { COCHE, claveCargador, notaDe, guardarNota, cargas, bateria } from './datos.js';
+import { operadorDe, enlaceApp, esIphone } from './operadores.js';
 import { abrirFormCarga } from './pantallas/diario.js';
 
 const ENCHUFES = { C: 'CCS', T: 'Tipo 2', H: 'CHAdeMO', S: 'Schuko', X: 'Tesla', J: 'Tipo 1', I: 'Industrial' };
 const TARJETA = 1, APP = 2, RFID = 4, GRATIS = 8, SIN_REGISTRO = 16, CLIENTES = 32;
 const CELDA = 0.25;
+export const SERVICIOS = { r: '☕ Cafetería o restaurante', s: '🛒 Tienda o súper', g: '⛽ Gasolinera', h: '🏨 Hotel', p: '🅿️ Parking cubierto' };
 
 let todos = null, rejilla = null, fechaDatos = null, cargando = null;
 
@@ -33,14 +34,15 @@ export function cargarTodos() {
 }
 export const fechaLista = () => fechaDatos;
 
-function deFila([lat, lon, nombre, operador, potencia, enchufesTxt, pago, horario, dir, puntos, fuente], i) {
+function deFila([lat, lon, nombre, operador, potencia, enchufesTxt, pago, horario, dir, puntos, fuente, servicios = ''], i) {
   const enchufes = enchufesTxt ? enchufesTxt.split(',').map((x) => {
     const [, t, n, kw] = x.match(/^(\w)(\d+)(?::(\d+))?$/) || [];
     return { tipo: t, nombre: ENCHUFES[t] || t, n: +n || null, kw: +kw || 0 };
   }) : [];
   const ccs = enchufes.some((e) => e.tipo === 'C');
   return {
-    id: `c${i}`, lat, lon, nombre, operador, potencia, enchufes, ccs, dir, horario, puntos, fuente,
+    id: `c${i}`, lat, lon, nombre, operador, potencia, enchufes, ccs, dir, horario, puntos, fuente, servicios,
+    tarjeta: !!(pago & TARJETA), h24: horario === '24h',
     rapido: ccs && (potencia >= 50 || !potencia),
     compatible: !enchufes.length || enchufes.some((e) => 'CTS'.includes(e.tipo)),
     soloSchuko: enchufes.length > 0 && enchufes.every((e) => e.tipo === 'S' || !'CT'.includes(e.tipo)) && enchufes.some((e) => e.tipo === 'S'),
@@ -143,24 +145,25 @@ export const clasePin = (c) => (!c.compatible ? 'no' : c.rapido ? 'rapido' : c.p
 
 export function htmlPopup(c) {
   const como = `https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lon}`;
-  const apple = `https://maps.apple.com/?daddr=${c.lat},${c.lon}`;
+  const otro = esIphone() ? ['Apple Maps', `https://maps.apple.com/?daddr=${c.lat},${c.lon}`] : ['Waze', `https://waze.com/ul?ll=${c.lat},${c.lon}&navigate=yes`];
   const fuente = { m: 'Registro oficial', o: 'OpenStreetMap', mo: 'Registro oficial + OpenStreetMap' }[c.fuente] || '';
   return `<h3>${esc(c.nombre)}</h3>
     ${c.operador ? `<div class="suave">${esc(c.operador)}</div>` : ''}
     ${c.dir ? `<div class="muy-suave">${esc(c.dir)}</div>` : ''}
     <div style="font-size:22px;font-weight:750;margin-top:6px">${c.potencia ? `${num(c.potencia)} kW` : c.rapido ? 'Rápido' : 'Potencia sin datos'}
-      ${c.potencia > 200 ? '<span class="muy-suave" style="font-weight:500">(tu coche coge hasta 200)</span>' : ''}</div>
+      ${c.potencia > COCHE.dcMax ? `<span class="muy-suave" style="font-weight:500">(tu coche coge hasta ${COCHE.dcMax})</span>` : ''}</div>
     ${!c.compatible ? '<div style="color:var(--rojo);font-weight:700">No vale para tu coche (no tiene CCS ni Tipo 2)</div>' : ''}
     ${c.soloSchuko ? '<div style="color:var(--ambar);font-weight:600">Solo enchufe normal: necesitas el cargador portátil del coche</div>' : ''}
     <div class="chips">${c.enchufes.map((e) => `<span class="chip">${e.n ? `${e.n}× ` : ''}${e.nombre}${e.kw ? ` · ${num(e.kw)} kW` : ''}</span>`).join('') || '<span class="chip">Enchufes sin datos</span>'}
       ${c.gratis ? '<span class="chip activo">Gratis</span>' : ''}${c.pago.map((p) => `<span class="chip">${p}</span>`).join('')}</div>
     ${c.horario ? `<div class="suave">🕒 ${esc(c.horario === '24h' ? 'Abierto 24 h' : c.horario)}</div>` : ''}
     ${c.clientes ? '<div class="suave">Solo para clientes del sitio</div>' : ''}
+    ${c.servicios ? `<div class="suave">${[...c.servicios].map((s) => SERVICIOS[s]).filter(Boolean).join(' · ')}</div>` : ''}
     ${bloquePago(c)}
     ${bloqueMio(c)}
     <div class="fila" style="margin-top:10px">
       <a class="boton mini" href="${como}" target="_blank" rel="noopener">Google Maps</a>
-      <a class="boton mini sec" href="${apple}" target="_blank" rel="noopener">Apple Maps</a>
+      <a class="boton mini sec" href="${otro[1]}" target="_blank" rel="noopener">${otro[0]}</a>
     </div>
     <div class="fila" style="margin-top:8px">
       <button class="boton mini sec" data-accion="fav" data-k="${claveCargador(c)}">${notaDe(c)?.fav ? '★ Favorito' : '☆ Guardar'}</button>
@@ -174,6 +177,7 @@ export function htmlPopup(c) {
 function bloquePago(c) {
   const op = operadorDe(c.operador, c.nombre);
   const filas = [];
+  if (op?.id === 'tesla' && COCHE.supercargador) filas.push('🚗 <b>Con tu Tesla: enchufar y listo</b>, se cobra solo en tu cuenta de Tesla');
   if (c.gratis) filas.push('🎁 <b>Gratis</b> según OpenStreetMap');
   if (c.pago.includes('Tarjeta')) filas.push('💳 <b>Acepta tarjeta</b> en el poste');
   else if (c.rapido) filas.push('💳 Si el poste tiene lector o código QR, paga con tarjeta sin app');

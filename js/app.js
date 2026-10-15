@@ -7,6 +7,8 @@ import * as diario from './pantallas/diario.js';
 import * as guia from './pantallas/guia.js';
 import * as ajustesP from './pantallas/ajustes.js';
 import { cerrarHoja } from './comun.js';
+import { ajustes } from './datos.js';
+import { abrirElegirCoche } from './elegir-coche.js';
 
 const PANTALLAS = { inicio, cargar, mapa, viaje, diario, guia, ajustes: ajustesP };
 const raiz = document.getElementById('app');
@@ -26,6 +28,10 @@ function ir() {
 
 window.addEventListener('hashchange', ir);
 ir();
+if (!ajustes().coche) abrirElegirCoche({ primera: true });
+
+// Android (Chrome) avisa cuando la web se puede instalar: se guarda para el botón de Ajustes.
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); window.instalarApp = e; });
 
 // Instalable y sin conexión. Si hay versión nueva, se recarga sola al volver a la app.
 if ('serviceWorker' in navigator) {

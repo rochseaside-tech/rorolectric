@@ -27,12 +27,10 @@ export const kmCon = (pct, kwh100) => Math.max(0, (pct / 100) * COCHE.util / kwh
 export const pctTras = (km, pctIni, kwh100) => pctIni - (km * kwh100 / 100) / COCHE.util * 100;
 export const kwhEntre = (de, a) => Math.max(0, (a - de) / 100 * COCHE.util);
 
-// Potencia que acepta la batería según el % (curva simplificada, cuadra con el 30→80 % en 15 min del catálogo).
+// Potencia que acepta la batería según el % (curva simplificada de cada coche; la del S05 cuadra con su 30→80 % en 15 min).
 export function curvaDC(pct) {
-  if (pct < 50) return 185;
-  if (pct < 80) return 110;
-  if (pct < 90) return 55;
-  return 25;
+  for (const [hasta, kw] of COCHE.curva) if (pct < hasta) return kw;
+  return 20;
 }
 
 // Minutos de carga rápida de «de» a «a» % en un cargador de «kw» kW.
