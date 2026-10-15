@@ -1,0 +1,38 @@
+# Publica la app en GitHub Pages y, de paso, rehace la lista con TODOS los puntos de recarga
+# de España (registro oficial del Ministerio + OpenStreetMap). Corre sola cada noche y con cada
+# cambio del código: nadie tiene que hacer nada para que la lista esté al día.
+name: Publicar
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 3 * * *'   # cada día a las 03:17 UTC
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Partir de la lista publicada ahora (por si hoy falla alguna fuente)
+        run: curl -sf --max-time 60 "https://rochseaside-tech.github.io/rorolectric/datos/cargadores.json" -o datos/cargadores.json || echo "Se usa la del repositorio"
+      - name: Juntar todos los cargadores
+        run: node scripts/cargadores.mjs || echo "::warning::No se pudo rehacer la lista hoy; se publica la anterior"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deploy
+        uses: actions/deploy-pages@v4
