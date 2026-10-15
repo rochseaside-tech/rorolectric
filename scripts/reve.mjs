@@ -19,15 +19,26 @@ await mkdir(DIR, { recursive: true });
 const leer = async (f, def) => { try { return JSON.parse(await readFile(join(DIR, f), 'utf8')); } catch { return def; } };
 const cursor = () => ({ pag: 1, total: null, inicio: null, ultimoInicio: null, hecha: null, n: 0 });
 const estado = await leer('estado.json', { loc: cursor(), tar: cursor() });
+estado.est ||= cursor();
 const sitios = await leer('sitios.json', {});
 const precios = await leer('precios.json', {});
+const fuera = await leer('fuera.json', {}); // puntos (EVSE) fuera de servicio: { id: desde cuándo }
+// v2: los sitios guardan sus puntos (EVSE) para cruzarlos con el estado; si faltan, se repasan los sitios.
+if ((estado.version || 1) < 2) {
+  estado.version = 2;
+  if (Object.values(sitios).some((s) => !s.evses)) { estado.loc.pag = 1; estado.loc.hecha = null; }
+}
 
-// Qué toca pedir ahora.
+// Qué toca pedir ahora. Orden: sitios → si funcionan → precios. Después, cada hora lo primero son las
+// averías y arreglos desde la última vez (para que «no funciona» esté al día), luego tarifas cambiadas y sitios.
+const PAGINAS = { loc: '/locations', tar: '/connectors/tariffs', est: '/evses/operational_status' };
 function tarea(ahora) {
-  const { loc, tar } = estado;
+  const { loc, tar, est } = estado;
   if (!loc.hecha) return 'loc';
+  if (est.hecha && est.pag === 1 && ahora - Date.parse(est.ultimoInicio) >= 50 * 60e3) return 'est'; // cambios de la última hora
+  if (!est.hecha || est.pag > 1) return 'est';
   if (!tar.hecha || tar.pag > 1) return 'tar';
-  if (ahora - Date.parse(tar.ultimoInicio) >= 20 * HORA) return 'tar'; // tarifas cambiadas desde la última vez
+  if (ahora - Date.parse(tar.ultimoInicio) >= 20 * HORA) return 'tar'; // tarifas cambiadas desde ayer
   if (loc.pag > 1 || ahora - Date.parse(loc.ultimoInicio) >= 6 * 24 * HORA) return 'loc';
   return null;
 }
@@ -52,7 +63,7 @@ function guardarSitio(l, n) {
   }
   sitios[l.id] = {
     la: +la.toFixed(5), lo: +lo.toFixed(5), nombre: l.name || '', empresa: l.cpo_name || '', marca: (l.owner || '').split(' - ')[0],
-    dir: [l.address, l.city].filter(Boolean).join(', '), h24: !!l.opening_times?.twentyfourseven, tarjeta, reservable, enchufes, v: n,
+    dir: [l.address, l.city].filter(Boolean).join(', '), h24: !!l.opening_times?.twentyfourseven, tarjeta, reservable, enchufes, evses: (l.evses || []).map((e) => e.id), v: n,
   };
 }
 
@@ -93,9 +104,9 @@ async function pedir(ruta, params) {
   return { filas: await r.json(), total: +r.headers.get('total-pages') || 1 };
 }
 
-// Una hora de trabajo: hasta 5 consultas. Devuelve qué pasada ha terminado ('loc', 'tar' o '').
+// Una hora de trabajo: hasta 5 consultas. Devuelve qué pasada ha terminado y si se miraron averías.
 async function unaHora() {
-  let hechas = 0, terminada = '';
+  let hechas = 0, terminada = '', huboEst = false, limite = false;
   const ahora = Date.now(), hoy = new Date().toISOString().slice(0, 10);
   while (hechas < POR_HORA) {
     const t = tarea(ahora);
@@ -103,17 +114,24 @@ async function unaHora() {
     const c = estado[t];
     const empieza = c.pag === 1, cuando = new Date().toISOString();
     const params = { page: c.pag, limit: 100 };
-    // Tarifas: tras la primera pasada completa, solo las que han cambiado (con 1 h de margen).
-    if (t === 'tar' && c.hecha) params.date_from = new Date(Date.parse(c.ultimoInicio) - HORA).toISOString();
+    // Tarifas y estado: tras la primera pasada completa, solo lo que ha cambiado (con 1 h de margen).
+    if (t !== 'loc' && c.hecha) params.date_from = new Date(Date.parse(c.ultimoInicio) - HORA).toISOString();
     let res;
-    try { res = await pedir(t === 'loc' ? '/locations' : '/connectors/tariffs', params); } catch (e) { console.warn(e.message); break; }
-    if (res.limite) { console.log('REVE dice que ya van 5 consultas esta hora: se sigue en la próxima'); break; }
+    try { res = await pedir(PAGINAS[t], params); } catch (e) { console.warn(e.message); break; }
+    if (res.limite) { limite = true; console.log('REVE dice que ya van 5 consultas esta hora: se sigue en la próxima'); break; }
     hechas++;
+    if (t === 'est') huboEst = true;
     if (empieza) { c.inicio = cuando; c.n = (c.n || 0) + 1; }
     if (t === 'loc') for (const l of res.filas) guardarSitio(l, c.n);
-    else for (const x of res.filas) { const p = resumir(x.tariffs || [], hoy); if (p) precios[x.connector_id] = p; else delete precios[x.connector_id]; }
+    else if (t === 'tar') for (const x of res.filas) { const p = resumir(x.tariffs || [], hoy); if (p) precios[x.connector_id] = p; else delete precios[x.connector_id]; }
+    else {
+      for (const x of res.filas) {
+        const roto = x.operational_status === false || String(x.operational_status).toLowerCase() === 'false';
+        if (roto) fuera[x.id] = (x.last_operational_status_updated || '').slice(0, 10) || 1; else delete fuera[x.id];
+      }
+    }
     c.total = res.total;
-    console.log(`${t === 'loc' ? 'Sitios' : 'Tarifas'}: página ${c.pag} de ${c.total}${params.date_from ? ' (solo cambios)' : ''}`);
+    console.log(`${{ loc: 'Sitios', tar: 'Tarifas', est: 'Si funcionan' }[t]}: página ${c.pag} de ${c.total}${params.date_from ? ' (solo cambios)' : ''}`);
     if (c.pag >= c.total || !res.filas.length) {
       c.hecha = new Date().toISOString(); c.ultimoInicio = c.inicio; c.pag = 1;
       if (t === 'loc') {
@@ -121,33 +139,42 @@ async function unaHora() {
         for (const [id, s] of Object.entries(sitios)) if (s.v < c.n - 1) delete sitios[id];
       }
       terminada = t;
-      console.log(`Pasada de ${t === 'loc' ? 'sitios' : 'tarifas'} terminada`);
+      console.log(`Pasada de ${{ loc: 'sitios', tar: 'tarifas', est: 'estado' }[t]} terminada`);
     } else c.pag++;
   }
+  // Esta hora ya está gastada (por nosotros o por otra ejecución): la próxima espera a la siguiente.
+  estado.horaUsada = Math.floor(Date.now() / HORA); // (también si REVE no respondía: así nunca se relanza en bucle)
   estado.actualizado = new Date().toISOString();
   await writeFile(join(DIR, 'estado.json'), JSON.stringify(estado, null, 1));
   await writeFile(join(DIR, 'sitios.json'), JSON.stringify(sitios));
   await writeFile(join(DIR, 'precios.json'), JSON.stringify(precios));
-  console.log(`Consultas: ${hechas} · sitios: ${Object.keys(sitios).length} · enchufes con precio: ${Object.keys(precios).length}`);
-  return terminada;
+  await writeFile(join(DIR, 'fuera.json'), JSON.stringify(fuera));
+  console.log(`Consultas: ${hechas} · sitios: ${Object.keys(sitios).length} · enchufes con precio: ${Object.keys(precios).length} · puntos fuera de servicio: ${Object.keys(fuera).length}`);
+  return { terminada, averias: huboEst };
 }
 
-// Con REVE_HORAS > 1 se queda trabajando varias horas seguidas (5 consultas cada hora en punto),
-// para no depender de que GitHub lance a tiempo el robot programado.
+const esperarA = async (cuando) => {
+  console.log(`Espero a las ${new Date(cuando).toISOString().slice(11, 16)} UTC para las siguientes 5 consultas`);
+  await new Promise((r) => setTimeout(r, Math.max(0, cuando - Date.now())));
+};
+const horaSiguiente = () => (process.env.REVE_ESPERA ? Date.now() + +process.env.REVE_ESPERA // (para probar sin esperar una hora)
+  : (Math.floor(Date.now() / HORA) + 1) * HORA + 90e3); // la hora siguiente y minuto y medio
+
+// El robot se relanza solo cada hora: si las 5 consultas de esta hora ya se gastaron, espera a la siguiente.
+if (!process.env.REVE_ESPERA && estado.horaUsada === Math.floor(Date.now() / HORA)) await esperarA(horaSiguiente());
+
+// Con REVE_HORAS > 1 se queda trabajando varias horas seguidas (5 consultas cada hora en punto).
 const HORAS = Math.max(1, +process.env.REVE_HORAS || 1);
-let publicar = false;
+let publicar = false, averias = false;
 for (let h = 0; h < HORAS; h++) {
-  const terminada = await unaHora();
-  // Al acabar una pasada completa, el workflow vuelve a publicar la app con los datos nuevos.
-  // (Los cambios diarios de tarifas ya los recoge la publicación de cada noche.)
-  if (terminada === 'loc' || (terminada === 'tar' && estado.tar.n === 1)) publicar = true;
-  if (!tarea(Date.now()) || h === HORAS - 1) break;
-  const proxima = process.env.REVE_ESPERA ? Date.now() + +process.env.REVE_ESPERA // (para probar sin esperar una hora)
-    : (Math.floor(Date.now() / HORA) + 1) * HORA + 90e3; // la hora siguiente y minuto y medio
-  console.log(`Espero a las ${new Date(proxima).toISOString().slice(11, 16)} UTC para las siguientes 5 consultas`);
-  await new Promise((r) => setTimeout(r, proxima - Date.now()));
+  const r = await unaHora();
+  if (r.averias) averias = true;
+  // Al acabar una pasada completa, el workflow vuelve a publicar la app entera con los datos nuevos.
+  if (r.terminada === 'loc' || (r.terminada === 'tar' && estado.tar.n === 1) || (r.terminada === 'est' && estado.est.n === 1)) publicar = true;
+  if (h === HORAS - 1) break;
+  await esperarA(horaSiguiente());
 }
 if (process.env.GITHUB_OUTPUT) {
-  const queda = !!tarea(Date.now()) && !(estado.loc.hecha && estado.tar.hecha && estado.tar.pag === 1);
-  await writeFile(process.env.GITHUB_OUTPUT, `publicar=${publicar ? 'si' : 'no'}\nseguir=${queda ? 'si' : 'no'}\n`, { flag: 'a' });
+  // averias=si → publicar solo el estado (rápido); publicar=si → rehacer la lista entera.
+  await writeFile(process.env.GITHUB_OUTPUT, `publicar=${publicar ? 'si' : 'no'}\naverias=${averias && !publicar ? 'si' : 'no'}\nseguir=si\n`, { flag: 'a' });
 }

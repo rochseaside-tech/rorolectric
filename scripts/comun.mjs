@@ -110,7 +110,7 @@ export const marcaDe = (n) => (MARCAS.find(([re]) => re.test(n || '')) || [])[1]
 // Nombres que son códigos internos («B-Sabadell-002», «62047040710009»): mejor la empresa.
 export const pareceCodigo = (n) => !n || (/\d/.test(n) && !/\s/.test(n)) || /^[A-Z]{1,3}-[\w-]+-\d+$/.test(n);
 
-// Fila compacta: [lat, lon, nombre, operador, kWmax, enchufes, pago, horario, dirección, puntos, fuente, servicios, id REVE, precio REVE, tarifa en texto]
+// Fila compacta: [lat, lon, nombre, operador, kWmax, enchufes, pago, horario, dirección, puntos, fuente, servicios, id REVE, precio REVE, tarifa en texto, [puntos fuera de servicio, puntos], [otros ids REVE]]
 // enchufes: «C2:150,T4:22» = 2 CCS de hasta 150 kW y 4 Tipo 2 de 22 kW. Fuente: m = Ministerio, o = OpenStreetMap, r = REVE, f = registro de Francia.
 // Horarios de OpenStreetMap («Mo-Fr 08:00-20:00») con los días en castellano.
 const DIAS = { Mo: 'L', Tu: 'M', We: 'X', Th: 'J', Fr: 'V', Sa: 'S', Su: 'D', PH: 'festivos', off: 'cerrado' };
@@ -133,7 +133,11 @@ export function aFila(s) {
   const kw = Math.max(s.kwSitio || 0, ...Object.values(s.enchufes).map((e) => e.kw), 0);
   const enchufes = Object.entries(s.enchufes).map(([t, e]) => `${t}${e.n}${e.kw ? ':' + e.kw : ''}`).join(',');
   const fila = [+s.lat.toFixed(5), +s.lon.toFixed(5), s.nombre, s.operador === s.nombre ? '' : s.operador, kw, enchufes, s.pago, horarioEs(s.horario), s.dir, s.puntos, s.fuente, [...s.servicios].sort().join('')];
-  if (s.reve || s.tarifa) fila.push(s.reve || '', s.precio || 0);
-  if (s.tarifa) fila.push(s.tarifa);
+  // Campos opcionales al final (solo hasta el último que tenga algo): id REVE, precio, tarifa en texto,
+  // [puntos que no funcionan, puntos que tiene] y otros ids REVE del mismo sitio.
+  const extra = [s.reve || '', s.precio || 0, s.tarifa || '', s.funcion || 0, s.reveOtros || 0];
+  let ultimo = -1;
+  extra.forEach((v, i) => { if (v) ultimo = i; });
+  fila.push(...extra.slice(0, ultimo + 1));
   return fila;
 }

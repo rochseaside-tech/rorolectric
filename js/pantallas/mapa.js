@@ -1,13 +1,13 @@
 // Mapa con todos los cargadores (registro oficial + OSM). Verde = rápido, ámbar = 22 kW, gris = lento.
 // Con el mapa muy alejado solo salen los rápidos, para no llenarlo de puntos.
 // Filtros: atajos arriba (rápidos, gratis, tarjeta, favoritos) y el botón «Filtros» con todo lo demás.
-import { enZona, clasePin, abrirFicha, fechaLista, SERVICIOS, precioKwh, precioCorto } from '../cargadores.js';
+import { enZona, clasePin, abrirFicha, fechaLista, SERVICIOS, precioKwh, precioCorto, textoFunciona } from '../cargadores.js';
 import { claveCargador, notaDe, notas, bateria, ajustes, medido, lugares } from '../datos.js';
 import { ubicacion, ultimaUbicacion, esc, num, abrirHoja, cerrarHoja, capaMapa, buscarSitio, aviso } from '../comun.js';
 import { distancia, kmCon, consumo } from '../calc.js';
 import { OPERADORES, operadorDe } from '../operadores.js';
 
-const FILTROS_BASE = { minKw: 0, ccs: false, tipo2: false, gratis: false, tarjeta: false, h24: false, servicios: [], empresa: '', sinClientes: false, favoritos: false, compatibles: true, conPrecio: false, reservable: false };
+const FILTROS_BASE = { minKw: 0, ccs: false, tipo2: false, gratis: false, tarjeta: false, h24: false, servicios: [], empresa: '', sinClientes: false, sinRotos: true, favoritos: false, compatibles: true, conPrecio: false, reservable: false };
 let filtros = leerFiltros();
 let buscarPoste = false; // «Estoy en un cargador»: abrir la ficha del que tienes al lado
 // Vista de precios: los puntos enseñan el €/kWh (de REVE) en vez de los kW.
@@ -33,6 +33,7 @@ function pasa(c) {
   if (f.tarjeta && !c.tarjeta) return false;
   if (f.h24 && !c.h24) return false;
   if (f.sinClientes && c.clientes) return false;
+  if (f.sinRotos && c.roto) return false;
   if (f.reservable && !c.reservable) return false;
   if (f.conPrecio && !c.precio) return false;
   if (f.servicios.length && !f.servicios.some((s) => c.servicios.includes(s))) return false;
@@ -77,6 +78,9 @@ export function pintar(raiz, [modo] = []) {
     try { const s = await buscarSitio(q.value); mapa.setView(s.punto, 14); } catch (err) { aviso(err.message); }
   };
   raiz.querySelector('#lista').onclick = () => abrirLista();
+  // Cuando llegan las averías de la última hora, se repintan los puntos.
+  alEstado = () => { if (mapa) dibujar(raiz); };
+  window.addEventListener('estado-reve', alEstado);
   centrar(raiz, false);
 }
 
@@ -94,7 +98,7 @@ function abrirLista(orden = 'cerca') {
       <button class="chip ${orden === 'precio' ? 'activo' : ''}" data-o="precio">💶 Más baratos</button></div>` : ''}
     ${lista.length ? `<ul class="lista">${lista.map(({ c, d }) => `<li data-k="${claveCargador(c)}" style="cursor:pointer">
       <span class="icono" style="background:${{ rapido: '#3FE0B0', medio: '#FFB84D', lento: '#9AA3B1', no: '#5A606B' }[clasePin(c)]};color:#062018;font-weight:800;font-size:13px">${c.potencia ? Math.round(c.potencia) : '⚡'}</span>
-      <div class="cuerpo"><b>${esc(c.nombre)}</b><span>${[c.operador, c.dir].filter(Boolean).map(esc).join(' · ')}</span>${c.precio ? `<span style="display:block;color:var(--acento);font-weight:650">💶 ${precioCorto(c)}</span>` : ''}</div>
+      <div class="cuerpo"><b>${esc(c.nombre)}</b><span>${[c.operador, c.dir].filter(Boolean).map(esc).join(' · ')}</span>${textoFunciona(c) ? `<span style="display:block;color:${c.roto ? 'var(--rojo)' : 'var(--ambar)'};font-weight:650">${textoFunciona(c)}</span>` : ''}${c.precio ? `<span style="display:block;color:var(--acento);font-weight:650">💶 ${precioCorto(c)}</span>` : ''}</div>
       <div class="lado">${d < 1 ? `${Math.round(d * 1000)} m` : `${num(d, 1)} km`}<small class="suave">en línea recta</small></div></li>`).join('')}</ul>`
       : '<p class="suave">Ninguno con estos filtros en esta zona. Aleja el mapa o quita filtros.</p>'}
     <div class="botones"><button class="boton sec" data-cerrar>Cerrar</button></div>`, (caja) => {
@@ -168,7 +172,7 @@ function abrirFiltros(raiz) {
     <label class="campo"><span>Enchufe</span><div class="chips">
       ${chip('ccs', 1, 'CCS (rápida)', f.ccs)}${chip('tipo2', 1, 'Tipo 2 (lenta)', f.tipo2)}${chip('compatibles', 1, 'Ocultar los que no valen para mi coche', f.compatibles)}</div></label>
     <label class="campo"><span>Pagar</span><div class="chips">
-      ${chip('gratis', 1, '🎁 Gratis', f.gratis)}${chip('tarjeta', 1, '💳 Tarjeta en el poste', f.tarjeta)}${chip('conPrecio', 1, '💶 Solo con precio', f.conPrecio)}${chip('sinClientes', 1, 'Ocultar «solo clientes»', f.sinClientes)}</div></label>
+      ${chip('gratis', 1, '🎁 Gratis', f.gratis)}${chip('tarjeta', 1, '💳 Tarjeta en el poste', f.tarjeta)}${chip('conPrecio', 1, '💶 Solo con precio', f.conPrecio)}${chip('sinClientes', 1, 'Ocultar «solo clientes»', f.sinClientes)}${chip('sinRotos', 1, '⛔ Ocultar los que no funcionan', f.sinRotos)}</div></label>
     <label class="campo"><span>Horario y reserva</span><div class="chips">${chip('h24', 1, '🕒 Abierto 24 h', f.h24)}${chip('reservable', 1, '📅 Se puede reservar', f.reservable)}</div></label>
     <label class="campo"><span>Para esperar mientras carga</span><div class="chips">
       ${Object.entries(SERVICIOS).map(([k, t]) => chip('servicios', k, t, f.servicios.includes(k))).join('')}</div></label>
@@ -240,7 +244,7 @@ function dibujar(raiz) {
   const lista = visibles.filter((c) => !lejos || (c.rapido && c.compatible) || notaDe(c)?.fav);
   for (const c of lista) {
     if (verPrecio) { pinPrecio(c); continue; }
-    const txt = c.potencia ? (c.potencia >= 1000 ? '' : Math.round(c.potencia)) : c.rapido ? '⚡' : '';
+    const txt = c.roto ? '⛔' : c.potencia ? (c.potencia >= 1000 ? '' : Math.round(c.potencia)) : c.rapido ? '⚡' : '';
     const m = L.marker([c.lat, c.lon], { zIndexOffset: c.rapido ? 500 : 0,
       icon: L.divIcon({ className: '', html: `<div class="pin ${clasePin(c)}" ${notaDe(c)?.fav ? 'style="outline:3px solid #FFD84D;outline-offset:1px"' : ''}><span style="font-size:${String(txt).length > 2 ? 10 : 12}px">${esc(txt)}</span></div>`, iconSize: [28, 28], iconAnchor: [14, 30], popupAnchor: [0, -28] }),
     }).on('click', () => abrirFicha(c)).addTo(capa);
@@ -280,4 +284,6 @@ function pinPrecio(c) {
   marcadores.set(claveCargador(c), m);
 }
 
-export function salir() { mapa?.remove(); mapa = null; capa = null; yo = null; aro = null; }
+let alEstado = null;
+export function salir() {
+  if (alEstado) window.removeEventListener('estado-reve', alEstado); mapa?.remove(); mapa = null; capa = null; yo = null; aro = null; }

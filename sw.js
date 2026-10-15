@@ -1,11 +1,11 @@
 // sw.js — guarda la app en el móvil para que funcione sin cobertura (también la lista de cargadores).
 // Los datos de la usuaria no pasan por aquí: viven en el almacenamiento del navegador.
-const VERSION = 'v14';
+const VERSION = 'v15';
 const CACHE = `rorolectric-${VERSION}`;
 
 const ARCHIVOS = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
-  './js/app.js', './js/datos.js', './js/calc.js', './js/comun.js', './js/cargadores.js', './js/operadores.js', './js/elegir-coche.js',
+  './js/app.js', './js/datos.js', './js/calc.js', './js/comun.js', './js/cargadores.js', './js/operadores.js', './js/elegir-coche.js', './js/suscripciones.js',
   './js/pantallas/inicio.js', './js/pantallas/cargar.js', './js/pantallas/mapa.js', './js/pantallas/viaje.js',
   './js/pantallas/diario.js', './js/pantallas/guia.js', './js/pantallas/ajustes.js',
   './js/vendor/leaflet.js', './js/vendor/leaflet.css', './datos/cargadores.json',

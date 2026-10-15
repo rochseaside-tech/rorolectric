@@ -1,10 +1,10 @@
 // Viaje: ruta y paradas en cargadores rápidos REALES de la ruta (como ABRP, pero con la lista oficial).
 import { COCHE, TIPOS_VIA, ajustes, bateria, claveCargador, medido, lugares, lugarPorNombre } from '../datos.js';
-import { consumo, planViaje, planConCargadores, muestrearRuta, cargadoresEnRuta, perfilEnergia } from '../calc.js';
-import { enZona, cargarTodos, abrirFicha, precioKwh, precioCorto } from '../cargadores.js';
+import { consumo, planViaje, planConCargadores, muestrearRuta, cargadoresEnRuta, perfilEnergia, factorViento, rumbo, VELOCIDAD } from '../calc.js';
+import { enZona, cargarTodos, abrirFicha, precioKwh, precioCorto, textoFunciona } from '../cargadores.js';
 import { esc, num, euros, duracion, ubicacion, temperatura, campo, aviso, capaMapa, buscarSitio, rutaEnCoche } from '../comun.js';
 
-let form = { desde: '', hasta: '', pct: null, via: 'autovia120', llegar: 15, km: '', temp: '', parada: 12, cargarHasta: 80, minKw: 50, criterio: 'rapido' };
+let form = { desde: '', hasta: '', pct: null, via: 'autovia120', llegar: 15, km: '', temp: '', parada: 12, cargarHasta: 80, minKw: 50, criterio: 'rapido', sinPeajes: false };
 let mapa = null;
 
 // Botones con los sitios guardados (Ajustes → Mis sitios) para rellenar «Desde» o «Hasta».
@@ -23,6 +23,7 @@ export function pintar(raiz, [destino] = []) {
       ${botonesLugares('hasta') || '<p class="muy-suave" style="margin:-4px 0 12px">Guarda tus sitios habituales en <a href="#/ajustes">Ajustes</a> y aquí sale un botón para cada uno.</p>'}
       <div class="fila">${campo('Salgo con', 'pct', form.pct, { unidad: '%' })}${campo('Llegar con al menos', 'llegar', form.llegar, { unidad: '%' })}</div>
       <label class="campo"><span>Por dónde</span><select name="via">${TIPOS_VIA.map(([k, t]) => `<option value="${k}" ${k === form.via ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <div class="chips" style="margin:-4px 0 12px"><button type="button" class="chip ${form.sinPeajes ? 'activo' : ''}" id="peajes">🚫 Evitar peajes</button></div>
       <label class="campo"><span>Paradas</span><div class="segmento" style="margin:0" id="criterio">
         <button type="button" data-c="rapido" class="${form.criterio !== 'barato' ? 'activo' : ''}">⚡ Más rápido</button>
         <button type="button" data-c="barato" class="${form.criterio === 'barato' ? 'activo' : ''}">💶 Más barato</button></div></label>
@@ -49,6 +50,7 @@ export function pintar(raiz, [destino] = []) {
     // Elegir destino ya es decir «vamos»: se planifica sin pulsar el botón.
     if (fila.dataset.rellena === 'hasta') { leer(); planificar(raiz); }
   }; });
+  f.querySelector('#peajes').onclick = (e) => { form.sinPeajes = !form.sinPeajes; e.currentTarget.classList.toggle('activo', form.sinPeajes); };
   f.querySelector('#criterio').onclick = (e) => {
     const b = e.target.closest('[data-c]'); if (!b) return;
     form.criterio = b.dataset.c;
@@ -68,7 +70,7 @@ async function planificar(raiz) {
     const origen = form.desde.trim() ? await sitio(form.desde) : { punto: await ubicacion(), nombre: 'donde estás' };
     if (!origen.punto) throw new Error('No sé dónde estás: escribe el «Desde» o activa la ubicación.');
     const destino = await sitio(form.hasta);
-    const r = await rutaEnCoche(origen.punto, destino.punto);
+    const r = await rutaEnCoche(origen.punto, destino.punto, { sinPeajes: form.sinPeajes });
     await mostrar(raiz, { ...r, origen, destino });
   } catch (e) {
     res.innerHTML = `<div class="resultado ambar"><div class="grande">Ups</div><p>${esc(e.message || 'Sin conexión')}</p></div>`;
@@ -96,19 +98,22 @@ async function rapidosDeLaRuta(ruta) {
   const lats = ruta.map((p) => p[0]), lons = ruta.map((p) => p[1]);
   const [s, n, w, e] = [Math.min(...lats) - 0.05, Math.max(...lats) + 0.05, Math.min(...lons) - 0.07, Math.max(...lons) + 0.07];
   const zona = await enZona(s, w, n, e);
-  return cargadoresEnRuta(muestrearRuta(ruta), zona.filter((c) => c.rapido && c.compatible && !c.clientes));
+  return cargadoresEnRuta(muestrearRuta(ruta), zona.filter((c) => c.rapido && c.compatible && !c.clientes && !c.roto));
 }
 
 const lineaCargador = (c, extra = '') => `<a href="https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lon}" target="_blank" rel="noopener"
   style="display:block;padding:10px 12px;margin-top:6px;border-radius:10px;background:var(--tarjeta2);text-decoration:none;color:var(--texto);font-size:14px">
   ⚡ <b>${esc(c.nombre)}</b>${c.operador ? ` <span class="suave">· ${esc(c.operador)}</span>` : ''}<br>
-  <span class="suave">${c.potencia ? `${num(c.potencia)} kW` : 'rápido'} · km ${num(c.kmRuta)} · ${c.desvio < 0.3 ? 'en la misma ruta' : `a ${num(c.desvio, 1)} km de la ruta`}${c.precio ? ` · 💶 ${precioCorto(c)}` : ''}${extra}</span></a>`;
+  <span class="suave">${c.potencia ? `${num(c.potencia)} kW` : 'rápido'} · km ${num(c.kmRuta)} · ${c.desvio < 0.3 ? 'en la misma ruta' : `a ${num(c.desvio, 1)} km de la ruta`}${c.precio ? ` · 💶 ${precioCorto(c)}` : ''}${textoFunciona(c) ? ` · ${textoFunciona(c)}` : ''}${extra}</span></a>`;
 
-async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
+async function mostrar(raiz, { km, horas, ruta, origen, destino, peajes }) {
   const res = raiz.querySelector('#res');
   res.innerHTML = '<div class="tarjeta suave">Buscando cargadores en la ruta…</div>';
   const temp = form.temp !== '' && form.temp != null ? +form.temp : await temperatura(origen?.punto);
-  const c = consumo(form.via, temp, ajustes(), medido());
+  let c = consumo(form.via, temp, ajustes(), medido());
+  // Viento de ahora en ~12 puntos de la ruta: de cara gasta más (ya contado en el plan).
+  let viento = null;
+  if (ruta) { try { viento = await vientoDe(ruta, km); c *= viento.factor; } catch { /* sin datos del tiempo: sin viento */ } }
   let enRuta = [];
   if (ruta) { try { enRuta = await rapidosDeLaRuta(ruta); } catch { /* sin lista: plan teórico */ } }
   const opciones = { llegarCon: +form.llegar || 10, paradaEn: Math.max(3, +form.parada || 12), cargarHasta: Math.min(100, Math.max(30, +form.cargarHasta || 80)) };
@@ -129,6 +134,8 @@ async function mostrar(raiz, { km, horas, ruta, origen, destino }) {
       <p>${num(km)} km${origen ? ` desde ${esc(origen.nombre)} hasta ${esc(destino.nombre)}` : ''}. Conduciendo ${duracion(conduccion * 60)}${n ? `; en total unas ${duracion(conduccion * 60 + plan.minutosCarga + n * 5)}` : ''}.
       ${plan.llegada != null ? `Llegas con un <b>${Math.round(plan.llegada)} %</b>.` : ''}</p>
       ${desnivel && desnivel.sube > 50 ? `<p>⛰️ Subes ${num(desnivel.sube)} m y bajas ${num(desnivel.baja)} m en total: ${desnivel.total >= 0 ? 'gasta' : 'recupera'} unos <b>${num(Math.abs(desnivel.total), 1)} kWh</b> (≈ ${num(Math.abs(desnivel.total) / COCHE.util * 100)} % de batería). Ya está contado tramo a tramo.</p>` : ''}
+      ${viento && Math.abs(viento.factor - 1) >= 0.02 ? `<p>💨 Viento ${viento.medio > 0 ? 'de cara' : 'a favor'} ahora mismo (unos ${num(Math.abs(viento.medio) / 0.7)} km/h de media en tu dirección): ${viento.factor > 1 ? 'gastas' : 'ahorras'} un <b>${num(Math.abs(viento.factor - 1) * 100)} %</b>. Ya está contado.</p>` : ''}
+      ${form.sinPeajes ? `<p>🚫 ${peajes ? 'No hay forma razonable de evitar todos los peajes: esta ruta aún tiene alguno.' : 'Ruta sin peajes.'}</p>` : ''}
       ${costeViaje(km, plan)}
       ${comparar(plan, otro)}
       <p class="muy-suave">Consumo usado: ${num(c, 1)} kWh/100 km${temp != null ? ` con ${num(temp)} °C` : ''}. ${ruta ? `${enRuta.length} cargadores rápidos a menos de 3 km de la ruta.` : ''} Paradas con al menos un ${opciones.paradaEn} %, cargando hasta el ${opciones.cargarHasta} % o lo justo para llegar, en cargadores de ${form.minKw} kW o más (cámbialo en «Más opciones»).</p>
@@ -201,6 +208,22 @@ function comparar(plan, otro) {
   const nombre = form.criterio === 'barato' ? '⚡ Más rápido' : '💶 Más barato';
   const partes = [Math.abs(e) >= 1 && (e > 0 ? `pagarías ${euros(e, 0)} más` : `ahorrarías ${euros(-e, 0)}`), Math.abs(m) >= 3 && (m > 0 ? `estarías ${duracion(m)} más cargando` : `cargarías ${duracion(-m)} menos`)].filter(Boolean);
   return `<p class="muy-suave">Con «${nombre}»: ${partes.join(' y ')}${otro.paradas.length !== plan.paradas.length ? ` (${otro.paradas.length} paradas)` : ''}.</p>`;
+}
+
+// Viento de ahora (Open-Meteo, gratis) en puntos repartidos por la ruta.
+async function vientoDe(ruta, km) {
+  const m = muestrearRuta(ruta, Math.max(5, km / 12));
+  if (m.length < 2) return null;
+  const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${m.map((x) => x.p[0].toFixed(3)).join(',')}&longitude=${m.map((x) => x.p[1].toFixed(3)).join(',')}&current=wind_speed_10m,wind_direction_10m`);
+  if (!r.ok) throw new Error('sin viento');
+  const d = await r.json();
+  const lista = Array.isArray(d) ? d : [d];
+  const tramos = [];
+  for (let i = 0; i < m.length - 1; i++) {
+    const w = lista[i]?.current; if (!w) continue;
+    tramos.push({ km: m[i + 1].km - m[i].km, rumbo: rumbo(m[i].p, m[i + 1].p), viento: w.wind_speed_10m, desde: w.wind_direction_10m });
+  }
+  return factorViento(tramos, VELOCIDAD[form.via] || 100);
 }
 
 export function salir() { mapa?.remove(); mapa = null; }

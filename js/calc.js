@@ -304,6 +304,28 @@ export function consumoMedido(cargas) {
   return v > normal * 0.75 && v < normal * 1.6 ? { kwh100: v, km } : null;
 }
 
+// Viento: cuánto más (o menos) gasta el viaje. «tramos» = [{ km, rumbo (hacia dónde vas, grados), viento (km/h a 10 m),
+// desde (de dónde sopla, grados) }]. A la altura del coche sopla ~30 % menos que a 10 m. La parte del gasto que es
+// «empujar aire» crece con el cuadrado de la velocidad relativa; a 100-120 km/h es ~60 % del consumo.
+export function factorViento(tramos, velocidad) {
+  const parteAire = velocidad >= 90 ? 0.6 : velocidad >= 45 ? 0.35 : 0.15;
+  let km = 0, suma = 0, deCara = 0;
+  for (const t of tramos) {
+    const frente = t.viento * 0.7 * Math.cos((t.desde - t.rumbo) * Math.PI / 180); // + de cara, − a favor
+    const v = Math.max(velocidad / 2, velocidad + Math.max(-velocidad / 2, Math.min(velocidad, frente)));
+    // A favor se cuenta solo la mitad: mejor quedarse corto prometiendo autonomía.
+    suma += t.km * (1 + parteAire * ((v * v) / (velocidad * velocidad) - 1) * (frente < 0 ? 0.5 : 1));
+    deCara += t.km * frente; km += t.km;
+  }
+  return km ? { factor: suma / km, medio: deCara / km } : { factor: 1, medio: 0 };
+}
+
+export function rumbo(a, b) {
+  const [f1, f2] = [a[0], b[0]].map((x) => x * Math.PI / 180), dl = (b[1] - a[1]) * Math.PI / 180;
+  const y = Math.sin(dl) * Math.cos(f2), x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
 // Salud de la batería con tus cargas: si metiste X kWh y el % subió Y puntos, la batería entera tiene X / Y × 100.
 // Solo cargas con «desde» y «hasta» apuntados y al menos 30 puntos de subida (con menos, el error del % del coche pesa mucho).
 // Devuelve la mediana de las últimas 10 (para que una carga mal apuntada no la tuerza).

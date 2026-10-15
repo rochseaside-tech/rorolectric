@@ -150,18 +150,27 @@ async function juntarReve(sitios, rejilla) {
     precios = JSON.parse(await readFile(join(dir, 'precios.json'), 'utf8'));
     estado = JSON.parse(await readFile(join(dir, 'estado.json'), 'utf8'));
   } catch { console.warn('Sin datos de REVE todavía'); return null; }
+  let fuera = {};
+  try { fuera = JSON.parse(await readFile(join(dir, 'fuera.json'), 'utf8')); } catch { /* aún no se sabe */ }
+  const estadoCompleto = !!estado.est?.hecha;
+  let conAverias = 0;
   let conPrecio = 0, nuevos = 0, juntados = 0;
   for (const [id, x] of Object.entries(r)) {
     if (/\bpruebas?\b|^test\b/i.test(x.nombre)) continue;
     const s = { lat: x.la, lon: x.lo };
     const precio = precioSitio(x, precios);
     const reservable = x.reservable || x.enchufes.some(([idE]) => precios[idE]?.[6]);
+    // Puntos que no funcionan / puntos que tiene (solo si se sabe: estado completo o alguno roto)
+    const nFuera = (x.evses || []).filter((e) => fuera[e]).length;
+    const funcion = x.evses?.length && (estadoCompleto || nFuera) ? [nFuera, x.evses.length] : null;
     const marcas = new Set([x.marca, x.empresa].filter(Boolean).map((n) => marcaDe(n).toLowerCase()));
     const misma = (o) => marcas.has(marcaDe(o.operador).toLowerCase()) || [...marcas].some((m) => m.length > 3 && marcaDe(o.operador).toLowerCase().startsWith(m));
     const cerca = vecinos(rejilla, s, 100).sort((a, b) => metros(s, a) - metros(s, b));
     const m = cerca.find(misma) || cerca.find((o) => !o.reve && metros(s, o) <= 40);
     if (m) {
+      if (m.reve && m.reve !== id) (m.reveOtros ||= []).push(id); // varios de REVE en el mismo sitio
       m.reve ||= id; m.precio = mezclarPrecio(m.precio, precio);
+      if (funcion) m.funcion = m.funcion ? [m.funcion[0] + funcion[0], m.funcion[1] + funcion[1]] : funcion;
       if (x.tarjeta) m.pago |= TARJETA;
       if (reservable) m.pago |= RESERVABLE;
       if (!m.horario && x.h24) m.horario = '24h';
@@ -174,14 +183,14 @@ async function juntarReve(sitios, rejilla) {
         const e = (enchufes[t] ||= { n: 0, kw: 0 }); e.n++; e.kw = Math.max(e.kw, kw < 1000 ? kw : 0);
       }
       const n = { lat: x.la, lon: x.lo, nombre: x.nombre || x.marca || x.empresa, operador: x.marca || x.empresa, dir: x.dir, horario: x.h24 ? '24h' : '', pago: (x.tarjeta ? TARJETA : 0) | (reservable ? RESERVABLE : 0),
-        enchufes, puntos: 0, servicios: new Set(), fuente: 'r', reve: id, precio };
+        enchufes, puntos: 0, servicios: new Set(), fuente: 'r', reve: id, precio, funcion };
       sitios.push(n); nuevos++;
       const k = clave(n.lat, n.lon); (rejilla.get(k) || rejilla.set(k, []).get(k)).push(n);
     }
   }
-  for (const s of sitios) if (s.precio) conPrecio++;
-  console.log(`REVE: ${Object.keys(r).length} sitios (${juntados} ya estaban, ${nuevos} nuevos) · ${conPrecio} con precio`);
-  return { fecha: (estado.actualizado || '').slice(0, 10), sitios: Object.keys(r).length, conPrecio, tarifasCompletas: !!estado.tar?.hecha };
+  for (const s of sitios) { if (s.precio) conPrecio++; if (s.funcion?.[0]) conAverias++; }
+  console.log(`REVE: ${Object.keys(r).length} sitios (${juntados} ya estaban, ${nuevos} nuevos) · ${conPrecio} con precio · ${conAverias} con algún punto fuera de servicio`);
+  return { fecha: (estado.actualizado || '').slice(0, 10), sitios: Object.keys(r).length, conPrecio, tarifasCompletas: !!estado.tar?.hecha, estadoCompleto };
 }
 
 

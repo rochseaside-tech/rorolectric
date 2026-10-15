@@ -115,3 +115,13 @@ const op = { llegarCon: 15, paradaEn: 10, cargarHasta: 80 };
 assert.equal(planConCargadores(400, 100, 18, [barato, caro], { ...op, criterio: 'rapido' }).paradas[0].cargador, caro);
 assert.equal(planConCargadores(400, 100, 18, [barato, caro], { ...op, criterio: 'barato', precioDe: (c) => c.precio }).paradas[0].cargador, barato);
 console.log('Viaje más barato ✔');
+
+// Viento: de cara gasta más, a favor menos, de lado casi igual.
+import { factorViento, rumbo } from './js/calc.js';
+const t = (desde) => [{ km: 100, rumbo: 0, viento: 30, desde }];
+const cara = factorViento(t(0), 110).factor, favor = factorViento(t(180), 110).factor, lado = factorViento(t(90), 110).factor;
+assert.ok(cara > 1.1 && cara < 1.3, `de cara ${cara}`);
+assert.ok(favor < 0.92 && favor > 0.8, `a favor ${favor}`);
+assert.ok(Math.abs(lado - 1) < 0.01, `de lado ${lado}`);
+assert.ok(Math.abs(rumbo([41, 2], [42, 2]) - 0) < 1 && Math.abs(rumbo([41, 2], [41, 3]) - 90) < 1);
+console.log('Viento ✔');

@@ -25,6 +25,7 @@ export function cargarTodos() {
   }).then((d) => {
     fechaDatos = d.fecha; infoReve = d.reve || null;
     todos = d.d.map(deFila);
+    refrescarEstado(true);
     rejilla = new Map();
     for (const c of todos) {
       const k = `${Math.floor(c.lat / CELDA)},${Math.floor(c.lon / CELDA)}`;
@@ -36,7 +37,7 @@ export function cargarTodos() {
 }
 export const fechaLista = () => fechaDatos;
 
-function deFila([lat, lon, nombre, operador, potencia, enchufesTxt, pago, horario, dir, puntos, fuente, servicios = '', reve = '', precio = 0, tarifa = ''], i) {
+function deFila([lat, lon, nombre, operador, potencia, enchufesTxt, pago, horario, dir, puntos, fuente, servicios = '', reve = '', precio = 0, tarifa = '', funcion = null, reveOtros = 0], i) {
   const enchufes = enchufesTxt ? enchufesTxt.split(',').map((x) => {
     const [, t, n, kw] = x.match(/^(\w)(\d+)(?::(\d+))?$/) || [];
     return { tipo: t, nombre: ENCHUFES[t] || t, n: +n || null, kw: +kw || 0 };
@@ -45,6 +46,9 @@ function deFila([lat, lon, nombre, operador, potencia, enchufesTxt, pago, horari
   return {
     id: `c${i}`, lat, lon, nombre, operador, potencia, enchufes, ccs, dir, horario, puntos, fuente, servicios, reve, precio: precio || null, tarifa,
     reservable: !!(pago & RESERVABLE),
+    // Según REVE: [puntos que no funcionan, puntos que tiene]. «roto» = no funciona ninguno.
+    funcion, funcionNoche: funcion, roto: !!(funcion && funcion[1] && funcion[0] >= funcion[1]),
+    reves: reve ? [reve, ...(reveOtros || [])] : [],
     tarjeta: !!(pago & TARJETA), h24: horario === '24h',
     rapido: ccs && (potencia >= 50 || !potencia),
     compatible: !enchufes.length || enchufes.some((e) => 'CTS'.includes(e.tipo)),
@@ -85,7 +89,42 @@ async function cargarFuera(zonas) {
   await Promise.all(tareas);
 }
 
+/* ---------- Averías al día (datos/estado-reve.json, se publica cada hora) ---------- */
+// Lo de cada noche (funcionNoche) da cuántos puntos tiene; este archivo, cuáles no funcionan AHORA.
+let estadoReve = null, estadoPedido = 0;
+export const horaEstado = () => estadoReve?.fecha || null;
+export function refrescarEstado(forzar = false) {
+  if (!todos || (!forzar && Date.now() - estadoPedido < 15 * 60e3)) return;
+  estadoPedido = Date.now();
+  fetch('datos/estado-reve.json').then((r) => (r.ok ? r.json() : null)).then((e) => {
+    if (!e?.f) return;
+    estadoReve = e;
+    for (const c of todos) aplicarEstado(c);
+    window.dispatchEvent(new Event('estado-reve'));
+  }).catch(() => { /* sin conexión: lo de anoche */ });
+}
+function aplicarEstado(c) {
+  if (!estadoReve || !c.reves?.length) return;
+  let fuera = 0, total = 0;
+  for (const id of c.reves) { const x = estadoReve.f[id]; if (x) { fuera += x[0]; total += x[1]; } }
+  const puntos = Math.max(c.funcionNoche?.[1] || 0, total);
+  if (fuera) c.funcion = [fuera, puntos];
+  else if (estadoReve.completo) c.funcion = puntos ? [0, puntos] : null;
+  else c.funcion = c.funcionNoche; // aún no se ha mirado España entera: lo de anoche
+  c.roto = !!(c.funcion && c.funcion[1] && c.funcion[0] >= c.funcion[1]);
+}
+// «hoy a las 14:05», «ayer a las 22:10», «13 oct»
+export function cuandoEstado() {
+  const f = estadoReve?.fecha; if (!f) return fechaCorta(infoReve?.fecha);
+  const d = new Date(f), hoy = new Date();
+  const h = d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === hoy.toDateString()) return `hoy a las ${h}`;
+  if (d.toDateString() === new Date(hoy - 86400e3).toDateString()) return `ayer a las ${h}`;
+  return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+}
+
 export async function enZona(s, w, n, e) {
+  refrescarEstado();
   await cargarTodos();
   if ((n - s) * (e - w) <= 40) await cargarFuera([[s, w, n, e]]); // con el mapa muy alejado, no
   const lista = [];
@@ -226,8 +265,22 @@ function bloquePrecio(c) {
     <div class="muy-suave" style="margin-top:4px">Precio oficial publicado en REVE (Red Eléctrica de España), IVA incluido${fecha ? ` · datos del ${fecha}` : ''}.</div>${libre}</div>`;
 }
 
+/* ---------- ¿Funciona? (REVE) ---------- */
+export function textoFunciona(c) {
+  const f = c.funcion; if (!f || !f[1]) return '';
+  if (c.roto) return f[1] > 1 ? `⛔ No funciona ninguno de sus ${f[1]} puntos` : '⛔ Fuera de servicio';
+  return f[0] ? `⚠️ ${f[0]} de ${f[1]} puntos no funcionan` : '';
+}
+function lineaFunciona(c) {
+  const f = c.funcion; if (!f || !f[1]) return '';
+  const fecha = cuandoEstado();
+  const t = textoFunciona(c) || `✅ Funcionan sus ${f[1] > 1 ? `${f[1]} puntos` : 'puntos'}`;
+  const color = c.roto ? 'var(--rojo)' : f[0] ? 'var(--ambar)' : 'var(--acento)';
+  return `<div style="color:${color};font-weight:700;margin-top:4px">${t} <span class="muy-suave" style="font-weight:500">según REVE${fecha ? `, ${fecha}` : ''}</span></div>`;
+}
+
 /* ---------- Pintar ---------- */
-export const clasePin = (c) => (!c.compatible ? 'no' : c.rapido ? 'rapido' : c.potencia >= 22 ? 'medio' : 'lento');
+export const clasePin = (c) => (c.roto ? 'roto' : !c.compatible ? 'no' : c.rapido ? 'rapido' : c.potencia >= 22 ? 'medio' : 'lento');
 
 export function htmlPopup(c) {
   const como = `https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lon}`;
@@ -238,6 +291,7 @@ export function htmlPopup(c) {
     ${c.dir ? `<div class="muy-suave">${esc(c.dir)}</div>` : ''}
     <div style="font-size:22px;font-weight:750;margin-top:6px">${c.potencia ? `${num(c.potencia)} kW` : c.rapido ? 'Rápido' : 'Potencia sin datos'}
       ${c.potencia > COCHE.dcMax ? `<span class="muy-suave" style="font-weight:500">(tu coche coge hasta ${COCHE.dcMax})</span>` : ''}</div>
+    ${lineaFunciona(c)}
     ${!c.compatible ? '<div style="color:var(--rojo);font-weight:700">No vale para tu coche (no tiene CCS ni Tipo 2)</div>' : ''}
     ${c.soloSchuko ? '<div style="color:var(--ambar);font-weight:600">Solo enchufe normal: necesitas el cargador portátil del coche</div>' : ''}
     <div class="chips">${c.enchufes.map((e) => `<span class="chip">${e.n ? `${e.n}× ` : ''}${e.nombre}${e.kw ? ` · ${num(e.kw)} kW` : ''}</span>`).join('') || '<span class="chip">Enchufes sin datos</span>'}

@@ -204,6 +204,7 @@ table.ficha td:last-child { text-align: right; color: var(--texto); font-weight:
 .pin.medio { background: #FFB84D; }
 .pin.lento { background: #9AA3B1; }
 .pin.no { background: #5A606B; opacity: .7; }
+.pin.roto { background: #5A606B; border-color: #FF6B6B; opacity: .8; }
 .pin.parada { background: #2BB8F0; }
 /* Vista de precios: etiqueta con el €/kWh, de verde (barato) a rojo (caro) */
 .pin-precio { position: relative; display: inline-block; padding: 3px 7px; border-radius: 11px; font-size: 12px; font-weight: 800; white-space: nowrap; color: #101418; border: 2px solid rgba(255,255,255,.95); box-shadow: 0 3px 8px rgba(0,0,0,.4); }

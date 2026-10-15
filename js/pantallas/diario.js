@@ -1,6 +1,7 @@
 // Gastos: cada carga apuntada, resumen por mes y comparación con la gasolina.
 import { COCHE, ajustes, cambiarAjuste, cargas, guardarCarga, borrarCarga, hoyISO, exportar, importar, marcarHecho, corregirCoche } from '../datos.js';
 import { resumen, co2Ahorrado, saludBateria } from '../calc.js';
+import { tarjetaSuscripciones } from '../suscripciones.js';
 import { esc, num, euros, fechaBonita, abrirHoja, cerrarHoja, aviso, campo, certeza } from '../comun.js';
 
 // Salud de la batería, calculada con las cargas apuntadas (kWh metidos y % que subió).
@@ -55,6 +56,7 @@ export function pintar(raiz, [accion] = []) {
       ${grafMeses(meses)}
     </section>
     ${tarjetaSalud(todas)}
+    ${tarjetaSuscripciones(todas, ajustes().precioRapida)}
     ${Object.entries(meses).map(([mes, lista]) => `
       <section class="tarjeta">
         <div class="tarjeta-cab"><h2>${((t) => t[0].toUpperCase() + t.slice(1))(new Date(mes + '-15').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }))}</h2>

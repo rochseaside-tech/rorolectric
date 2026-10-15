@@ -127,12 +127,33 @@ export async function buscarSitio(texto) {
   return { punto: [+mejor.lat, +mejor.lon], nombre: municipio && llano(primera) !== llano(municipio) ? `${primera}, ${municipio}` : mejor.display_name.split(',').slice(0, 2).join(','), municipio };
 }
 
-// Ruta en coche (OSRM, gratis): km, horas y la línea del camino.
-export async function rutaEnCoche(a, b) {
+// Ruta en coche: km, horas y la línea del camino. Normal: OSRM (gratis).
+// Sin peajes: Valhalla (servidor gratuito de OpenStreetMap Alemania), que sí sabe evitarlos.
+export async function rutaEnCoche(a, b, { sinPeajes = false } = {}) {
+  if (sinPeajes) {
+    const pide = { locations: [{ lat: a[0], lon: a[1] }, { lat: b[0], lon: b[1] }], costing: 'auto', costing_options: { auto: { use_tolls: 0 } }, units: 'km' };
+    const r = await fetch(`https://valhalla1.openstreetmap.de/route?json=${encodeURIComponent(JSON.stringify(pide))}`);
+    const d = await r.json();
+    if (!d.trip) throw new Error('No encuentro ruta sin peajes entre esos dos sitios.');
+    return { km: d.trip.summary.length, horas: d.trip.summary.time / 3600, ruta: d.trip.legs.flatMap((l) => polilinea(l.shape)), peajes: !!d.trip.summary.has_toll };
+  }
   const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson`);
   const d = await r.json();
   if (d.code !== 'Ok') throw new Error('No encuentro ruta en coche entre esos dos sitios.');
   return { km: d.routes[0].distance / 1000, horas: d.routes[0].duration / 3600, ruta: d.routes[0].geometry.coordinates.map(([lo, la]) => [la, lo]) };
+}
+
+// Línea codificada de Valhalla (formato «polyline» con 6 decimales) → [[lat, lon], …]
+function polilinea(txt) {
+  const puntos = [];
+  let i = 0, lat = 0, lon = 0;
+  const leer = () => {
+    let res = 0, desp = 0, b;
+    do { b = txt.charCodeAt(i++) - 63; res |= (b & 0x1f) << desp; desp += 5; } while (b >= 0x20);
+    return res & 1 ? ~(res >> 1) : res >> 1;
+  };
+  while (i < txt.length) { lat += leer(); lon += leer(); puntos.push([lat / 1e6, lon / 1e6]); }
+  return puntos;
 }
 
 export const certeza = (n) => `<span class="certeza ${n}">${{ alta: 'Seguro', media: 'Bastante seguro', baja: 'Compruébalo' }[n]}</span>`;

@@ -1,13 +1,18 @@
 # Publica la app en GitHub Pages y, de paso, rehace la lista con TODOS los puntos de recarga
 # de España (registro oficial del Ministerio + OpenStreetMap + precios de REVE). Corre sola cada noche y con cada
 # cambio del código: nadie tiene que hacer nada para que la lista esté al día.
+# Modo «averias» (lo lanza «Precios REVE» cada hora): no rehace la lista, solo publica las averías de la última hora.
 name: Publicar
 on:
   push:
     branches: [main]
   schedule:
     - cron: '17 3 * * *'   # cada día a las 03:17 UTC
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'completo (rehacer la lista) o averias (solo el estado de la última hora)'
+        default: completo
 permissions:
   contents: read
   actions: read
@@ -23,6 +28,8 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      SOLO_AVERIAS: ${{ github.event.inputs.modo == 'averias' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,16 +37,23 @@ jobs:
           node-version: '22'
       - name: Partir de la lista publicada ahora (por si hoy falla alguna fuente)
         run: curl -sf --max-time 60 "https://rochseaside-tech.github.io/rorolectric/datos/cargadores.json" -o datos/cargadores.json || echo "Se usa la del repositorio"
-      - name: Recuperar los precios de REVE que va bajando «Precios REVE»
+      - name: Recuperar lo que va bajando «Precios REVE»
         uses: actions/cache/restore@v4
         with:
           path: ~/reve-datos
           key: reve-publicar-${{ github.run_id }}
           restore-keys: reve-
       - name: Juntar todos los cargadores
+        if: env.SOLO_AVERIAS != 'true'
         run: REVE_DIR="$HOME/reve-datos" node scripts/cargadores.mjs || echo "::warning::No se pudo rehacer la lista hoy; se publica la anterior"
       - name: Cargadores de Francia, Portugal y Andorra
+        if: env.SOLO_AVERIAS != 'true'
         run: node scripts/fuera.mjs || node scripts/fuera.mjs --copiar-publicado || echo "::warning::Hoy no hay cargadores de fuera de España"
+      - name: Cargadores de fuera, tal cual están publicados
+        if: env.SOLO_AVERIAS == 'true'
+        run: node scripts/fuera.mjs --copiar-publicado || echo "::warning::No se pudieron copiar los de fuera"
+      - name: Averías de ahora (REVE)
+        run: REVE_DIR="$HOME/reve-datos" node scripts/estado-reve.mjs || echo "::warning::Sin averías de REVE"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
