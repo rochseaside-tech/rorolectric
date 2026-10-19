@@ -35,15 +35,16 @@ if ((estado.version || 1) < 2) {
 // Orden: sitios → precios → todas las averías. Pero desde que están los sitios, lo PRIMERO de cada hora son
 // las averías y arreglos de la última hora («cam»), para que «no funciona» esté al día desde el principio.
 const PAGINAS = { loc: '/locations', tar: '/connectors/tariffs', est: '/evses/operational_status', cam: '/evses/operational_status' };
+// OJO (comprobado el 19 oct): pedir a REVE las averías «cambiadas desde hace una hora» devuelve casi toda España
+// (263 páginas), así que eso no sirve con 5 consultas por hora. Lo de «¿funciona AHORA?» lo da el intermediario
+// de Cloudflare al abrir cada ficha; aquí se repasa España entera sin parar con las consultas que sobran.
 function tarea(ahora) {
-  const { loc, tar, est, cam } = estado;
+  const { loc, tar } = estado;
   if (!loc.hecha) return 'loc';
-  if (cam.pag > 1 || !cam.ultimoInicio || ahora - Date.parse(cam.ultimoInicio) >= 50 * 60e3) return 'cam';
-  if (!tar.hecha || tar.pag > 1) return 'tar';
-  if (!est.hecha || est.pag > 1) return 'est';
-  if (ahora - Date.parse(tar.ultimoInicio) >= 20 * HORA) return 'tar'; // tarifas cambiadas desde ayer
+  if (!tar.hecha || tar.pag > 1) return 'tar';                          // 1.º los precios
+  if (ahora - Date.parse(tar.ultimoInicio) >= 20 * HORA) return 'tar';  // tarifas cambiadas desde ayer (pocas)
   if (loc.pag > 1 || ahora - Date.parse(loc.ultimoInicio) >= 6 * 24 * HORA) return 'loc';
-  return null;
+  return 'est';                                                         // el resto: si funcionan, vuelta tras vuelta
 }
 
 // Enchufes (OCPI) → letra corta, igual que en cargadores.mjs
@@ -135,6 +136,10 @@ async function unaHora() {
       }
     }
     c.total = res.total;
+    if (params.date_from && c.pag === 1 && c.total > 30) {
+      console.log(`«Solo cambios» trae ${c.total} páginas: no compensa; se deja para mañana`);
+      c.ultimoInicio = cuando; c.pag = 1; continue;
+    }
     console.log(`${{ loc: 'Sitios', tar: 'Tarifas', est: 'Si funcionan', cam: 'Averías y arreglos nuevos' }[t]}: página ${c.pag} de ${c.total}${params.date_from ? ' (solo cambios)' : ''}`);
     if (c.pag >= c.total || !res.filas.length) {
       c.hecha = new Date().toISOString(); c.ultimoInicio = c.inicio; c.pag = 1;
