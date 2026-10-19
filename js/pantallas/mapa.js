@@ -109,14 +109,18 @@ function abrirLista(orden = 'cerca') {
       const li = txt && caja.querySelector(`[data-k="${claveCargador(c)}"] .cuerpo`);
       if (li) li.insertAdjacentHTML('beforeend', `<span style="display:block;font-weight:700;color:${c.ahora.libres ? 'var(--acento)' : c.ahora.cargando ? 'var(--ambar)' : 'var(--rojo)'}">${txt}</span>`);
     }
-    const conReve = lista.map(({ c }) => c).filter((c) => c.reves?.length).slice(0, 5);
-    if (conReve.length) estadoAhora(conReve.map((c) => c.reves[0])).then((datos) => {
-      for (const c of conReve) {
-        const t = resumenAhora({ reves: [c.reves[0]] }, datos), txt = textoAhora(t);
-        const li = caja.querySelector(`[data-k="${claveCargador(c)}"] .cuerpo`);
-        if (li && txt) li.insertAdjacentHTML('beforeend', `<span style="display:block;font-weight:700;color:${t.libres ? 'var(--acento)' : t.cargando ? 'var(--ambar)' : 'var(--rojo)'}">${txt}</span>`);
-      }
-    }).catch(() => { /* sin conexión: sin «libre ahora» */ });
+    // España: si están libres AHORA, para todos los de la lista (de 5 en 5, a la vez; el intermediario guarda 2 min).
+    const conReve = lista.map(({ c }) => c).filter((c) => c.reves?.length);
+    for (let i = 0; i < conReve.length; i += 5) {
+      const grupo = conReve.slice(i, i + 5);
+      estadoAhora(grupo.map((c) => c.reves[0])).then((datos) => {
+        for (const c of grupo) {
+          const t = resumenAhora({ reves: [c.reves[0]] }, datos), txt = textoAhora(t);
+          const li = caja.querySelector(`[data-k="${claveCargador(c)}"] .cuerpo`);
+          if (li && txt && !li.querySelector('.ahora')) li.insertAdjacentHTML('beforeend', `<span class="ahora" style="display:block;font-weight:700;color:${t.libres ? 'var(--acento)' : t.cargando ? 'var(--ambar)' : 'var(--rojo)'}">${txt}</span>`);
+        }
+      }).catch(() => { /* sin conexión: sin «libre ahora» */ });
+    }
     caja.querySelector('.lista')?.addEventListener('click', (e) => {
       const li = e.target.closest('[data-k]'); if (!li) return;
       cerrarHoja();
