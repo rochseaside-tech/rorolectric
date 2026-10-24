@@ -9,6 +9,12 @@ let via = 'mixto';
 let llegoA = null; // sitio guardado elegido en «¿Llego?»
 let temp = null, tempReal = null;
 let tocado = false; // si mueve la barra a mano, lo que llegue del coche no se la pisa
+let vigia = null, raizVivo = null; // con Inicio abierto, se vuelve a preguntar al coche cada 3 min
+
+// Al volver a la app (desde otra app o con la pantalla encendida de nuevo), se pregunta al momento.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && raizVivo?.querySelector('#vivo') && conectado()) preguntarAlCoche(raizVivo);
+});
 
 // «Tu coche ahora» (MyChangan): lo pide al coche y lo pinta; si llega un % nuevo, mueve la barra.
 async function preguntarAlCoche(raiz, forzar = false) {
@@ -151,7 +157,14 @@ export function pintar(raiz) {
   actualizar(raiz);
   pintarRecordatorios(raiz);
   pintarMes(raiz);
-  if (conectado()) { pintarVivo(raiz); preguntarAlCoche(raiz); }
+  if (conectado()) {
+    pintarVivo(raiz); preguntarAlCoche(raiz);
+    raizVivo = raiz; clearInterval(vigia);
+    vigia = setInterval(() => {
+      if (!raiz.querySelector('#vivo')) { clearInterval(vigia); return; } // ya no está en Inicio
+      if (!document.hidden) preguntarAlCoche(raiz);
+    }, 3 * 60e3 + 2000);
+  }
   temp = tempManual();
   raiz.querySelector('#tiempo').onclick = () => editarTemp(raiz);
   temperatura().then((t) => { tempReal = t; if (tempManual() == null) temp = t; if (raiz.querySelector('#desliza')) actualizar(raiz); }); // si ya se fue de esta pantalla, nada

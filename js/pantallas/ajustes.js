@@ -130,8 +130,10 @@ function pintarConexion(el, paso = null) {
       <p class="suave"><b>Lo mejor, una cuenta solo para ROROLECTRIC:</b></p>
       <ol class="suave" style="padding-left:20px;margin:0">
         <li>En la app MyChangan, cierra sesión y crea una cuenta nueva con <b>otro correo</b>.</li>
-        <li>Vuelve a entrar con tu cuenta de siempre y <b>comparte el coche</b> con la nueva.</li>
-        <li>Conecta aquí con la cuenta nueva. Tu móvil sigue con la de siempre.</li></ol>
+        <li>Cierra sesión, entra con tu cuenta de siempre, toca <b>Compartir</b> en la pantalla principal e invita a la cuenta nueva, <b>sin fecha de fin</b>.</li>
+        <li>Cierra sesión, entra con la cuenta nueva y <b>acepta</b> el coche compartido.</li>
+        <li>Cierra sesión y vuelve a entrar con tu cuenta de siempre: tu cuenta sigue siendo la del dueño del coche y desde MyChangan lo controlas todo.</li>
+        <li>Conecta aquí con la cuenta nueva. Ya no se echan la una a la otra.</li></ol>
       <p class="muy-suave" style="margin-top:8px">No es una conexión oficial de Changan: la han descifrado otros dueños de Deepal (probada con un S05 de España). Si Changan cambia su sistema, puede dejar de ir un tiempo ${certeza('media')}. Tu sesión se guarda solo en este móvil y no va en las copias de seguridad.</p>
     </div></details>
     ${esperandoCodigo ? `<p class="suave">Te he mandado un código a <b>${esc(c.email)}</b> (mira también el correo no deseado).</p>
