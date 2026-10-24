@@ -127,7 +127,8 @@ function pintarConexion(el, paso = null) {
     <p class="suave" style="margin-top:0">Con tu cuenta de MyChangan, la app lee de tu coche la <b>batería</b>, si está <b>cargando</b> y cuánto le falta, si está <b>cerrado</b>, la <b>presión de las ruedas</b> y <b>dónde está aparcado</b>. Solo lee: no abre ni manda nada al coche.</p>
     <details class="guia" style="margin:0 0 12px"><summary><span class="emoji">⚠️</span>Antes de conectar, lee esto</summary><div class="dentro">
       <p class="suave" style="margin-top:0"><b>Changan solo deja una sesión abierta por cuenta.</b> Si conectas aquí con la misma cuenta que tienes en la app MyChangan, esa app te pedirá entrar otra vez (y al revés) ${certeza('alta')}.</p>
-      <p class="suave"><b>Lo mejor, una cuenta solo para ROROLECTRIC:</b></p>
+      <p class="suave">Además, cada coche admite pocas cuentas (en el S05, dos: la del dueño y una compartida) y cada cuenta, un solo móvil. <b>Si ya las usáis todas, conectar aquí os quita MyChangan en ese móvil</b>: cerrar el coche, el clima, las alertas.</p>
+      <p class="suave"><b>Si os queda una cuenta libre, lo mejor es una solo para ROROLECTRIC:</b></p>
       <ol class="suave" style="padding-left:20px;margin:0">
         <li>En la app MyChangan, cierra sesión y crea una cuenta nueva con <b>otro correo</b>.</li>
         <li>Cierra sesión, entra con tu cuenta de siempre, toca <b>Compartir</b> en la pantalla principal e invita a la cuenta nueva, <b>sin fecha de fin</b>.</li>

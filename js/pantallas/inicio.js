@@ -1,5 +1,5 @@
 // Inicio: batería y autonomía, «¿llego?», recordatorios y el gasto del mes.
-import { COCHE, TIPOS_VIA, ajustes, bateria, ponerBateria, cargas, hechos, marcarHecho, hoyISO, sesion, medido, tempManual, ponerTempManual, cambiarAjuste, lugares, viajeEnCurso } from '../datos.js';
+import { COCHE, TIPOS_VIA, ajustes, bateria, ponerBateria, cargas, hechos, marcarHecho, hoyISO, sesion, medido, tempManual, ponerTempManual, cambiarAjuste, lugares, viajeEnCurso, conexion } from '../datos.js';
 import { consumo, kmCon, pctTras, climaKwDe, resumen, pctTrasMinutos, horasAC, minutosDC, tramo } from '../calc.js';
 import { esc, num, euros, anillo, temperatura, aviso, hora, abrirHoja, cerrarHoja, ubicacion, rutaEnCoche, duracion } from '../comun.js';
 import { abrirElegirCoche } from '../elegir-coche.js';
@@ -294,7 +294,8 @@ function pintarRecordatorios(raiz) {
   // Los datos solo viven en este móvil: copia cada mes si hay algo que perder.
   if (cargas().length >= 3 && (!h.copia || dias(h.copia) <= -30)) lista.push({ icono: '💾', titulo: 'Guarda una copia de tus datos',
     texto: 'Tus cargas y notas solo están en este móvil. Si lo pierdes o lo cambias, con la copia lo recuperas todo.', enlace: '#/diario', urgente: !h.copia && cargas().length >= 10 });
-  if (puedeConectar() && !conectado()) lista.push({ icono: '🔗', titulo: 'Conecta la app con tu coche', texto: 'Con tu cuenta de MyChangan: la batería, si está cargando y si está cerrado se ponen solos.', enlace: '#/ajustes/coche' });
+  // Solo si nunca lo ha intentado: si se desconectó, es porque lo ha decidido (y no se le vuelve a pedir).
+  if (puedeConectar() && !conexion()) lista.push({ icono: '🔗', titulo: 'Conecta la app con tu coche', texto: 'Con tu cuenta de MyChangan: la batería, si está cargando y si está cerrado se ponen solos.', enlace: '#/ajustes/coche' });
   if (!a.matriculacion) lista.push({ icono: '✍️', titulo: 'Completa tus datos', texto: 'Fecha de matriculación, revisión y seguro: así te aviso a tiempo.', enlace: '#/ajustes' });
 
   const el = raiz.querySelector('#recordatorios');
