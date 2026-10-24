@@ -50,6 +50,7 @@ export default {
         const res = await ACCIONES[url.pathname](await req.json());
         return new Response(JSON.stringify(res), { headers: h });
       } catch (e) {
+        console.log('changan', url.pathname, e.tipo || 'error', e.message); // para `wrangler tail` (sin datos de la cuenta)
         return new Response(JSON.stringify({ error: e.message || 'Error', tipo: e.tipo || 'error' }), { status: e.tipo === 'sesion' ? 401 : 502, headers: h });
       }
     }

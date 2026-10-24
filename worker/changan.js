@@ -100,36 +100,59 @@ async function descifrarCoche(cifrado, secreto, r) {
 // ---------- Peticiones a la nube ----------
 const cabeceras = (deviceId, sesion = null, tsp = null) => {
   const h = {
-    appid: 'ca', language: 'en_US', appversion: 'V1.12.0', apptype: 'Android', devicetype: 'samsung',
+    authorization: '', appid: 'ca', language: 'en_US', appversion: 'V1.12.0', apptype: 'Android', devicetype: 'samsung',
     deviceid: deviceId, selectcountry: PAIS, 'x-os-version': '9', 'accept-language': 'en_US',
     'content-type': 'application/json; charset=UTF-8', 'user-agent': 'okhttp/4.12.0',
   };
   if (sesion?.token) {
     h.authorization = sesion.cac && !sesion.token.includes('|') ? `${sesion.token}|${sesion.cac}` : sesion.token;
-    h['X-Tsp-User-Token'] = h['X-VCS-User-Token'] = tsp || sesion.token.split('|')[0];
+    // La app actual (captura de sep-2026, BeauGiles/ha-deepal-cloud) manda aquí el cacToken si lo hay.
+    h['X-Tsp-User-Token'] = h['X-VCS-User-Token'] = tsp || sesion.cac || sesion.token.split('|')[0];
   }
   return h;
 };
 
+// En la pasarela del coche (CA), un 401/403 o un «APIGW_» es que no le gusta la llave de ESA pasarela,
+// no que la sesión haya caducado: se trata como «apigw» para probar la otra llave y no desconectar.
 async function post(base, ruta, cuerpo, deviceId, sesion = null, tsp = null) {
   const r = await fetch(base + ruta, { method: 'POST', headers: cabeceras(deviceId, sesion, tsp), body: JSON.stringify(cuerpo || {}) });
-  if (r.status === 401 || r.status === 403) throw new ErrorChangan('Sesión caducada', 'sesion');
-  if (!r.ok) throw new ErrorChangan(`Changan respondió ${r.status}`);
-  const d = await r.json();
+  const paso = ruta.split('/').pop();
+  let d = null;
+  try { d = await r.json(); } catch { /* sin JSON */ }
+  const code = String(d?.code || ''), msg = d?.msg || d?.message || '';
+  if (!r.ok) {
+    if (base === CA && (r.status === 401 || r.status === 403 || code.startsWith('APIGW_'))) throw new ErrorChangan(`${msg || 'Llave rechazada'} (${code || r.status}, ${paso})`, 'apigw');
+    if (r.status === 401 || r.status === 403) throw new ErrorChangan('Sesión caducada', 'sesion');
+    throw new ErrorChangan(`Changan respondió ${r.status}${msg ? ': ' + msg : ''} (${paso})`);
+  }
   if (d?.success === false) {
-    const code = String(d.code || '');
     if (code === 'CAC_1_1_01_033') throw new ErrorChangan('Changan pide esperar un poco antes de volver a preguntar', 'espera');
+    if (code.startsWith('APIGW_')) throw new ErrorChangan(`${msg || 'Error de Changan'} (${code}, ${paso})`, 'apigw');
     if (/AUTH/i.test(code) || code.startsWith('401') || code === 'APP_1_1_02_004' || code === 'APP_1_1_02_005') throw new ErrorChangan('Sesión caducada', 'sesion');
-    throw new ErrorChangan(`${d.msg || 'Error de Changan'} (${code})`, code.startsWith('APIGW_') ? 'apigw' : 'error');
+    throw new ErrorChangan(`${msg || 'Error de Changan'} (${code}, ${paso})`);
   }
   return d?.data;
 }
 
-// La pasarela «CA» (la del MQTT) acepta según la cuenta el token normal o el cacToken.
+// La pasarela «CA» (la del MQTT) acepta según la cuenta el cacToken o el token normal: se prueban los dos.
 async function postCa(ruta, cuerpo, s) {
-  try { return await post(CA, ruta, cuerpo, s.deviceId, s); } catch (e) {
-    if (e.tipo !== 'apigw' || !s.cac) throw e;
-    return post(CA, ruta, cuerpo, s.deviceId, s, s.cac);
+  const llaves = [...new Set([s.cac, s.token.split('|')[0]].filter(Boolean))];
+  let fallo;
+  for (const llave of llaves) {
+    try { return await post(CA, ruta, cuerpo, s.deviceId, s, llave); } catch (e) {
+      if (e.tipo !== 'apigw') throw e;
+      fallo = e;
+    }
+  }
+  throw fallo;
+}
+
+// Si el camino de siempre falla, la app tiene otro (rutas sacadas de la app por Sunek0/ha-deepal-alternative).
+async function postCaOtro(ruta, otra, cuerpo, s, vale) {
+  try { return await postCa(ruta, cuerpo, s); } catch (e) {
+    if (e.tipo === 'espera') throw e;
+    try { const d = await postCa(otra, cuerpo, s); if (vale(d)) return d; } catch { /* nos quedamos con el primer error */ }
+    throw e;
   }
 }
 
@@ -167,7 +190,13 @@ export async function estado({ sesion, carId }) {
     const coche = (coches || []).find((c) => String(c.carId) === String(carId)) || coches?.[0];
     if (!coche) throw new ErrorChangan('Esta cuenta no tiene ningún coche');
     const id = String(coche.carId);
-    const crudo = String(coche.protocolType || '').toUpperCase() === 'MQTT' ? await porMqtt(s, id) : await porRest(s, id);
+    // Por MQTT si el coche lo usa; si ese camino falla, se prueba el otro antes de rendirse.
+    const mqtt = String(coche.protocolType || '').toUpperCase() === 'MQTT';
+    let crudo;
+    try { crudo = mqtt ? await porMqtt(s, id) : await porRest(s, id); } catch (e) {
+      if (e.tipo === 'sesion' || e.tipo === 'espera') throw e;
+      try { crudo = mqtt ? await porRest(s, id) : await porMqtt(s, id); } catch { throw e; }
+    }
     return { coche: resumirCoche(coche), ...traducir(crudo) };
   };
   let res;
@@ -222,9 +251,10 @@ class Lector {
 
 async function porMqtt(s, id) {
   if (!s.userId) throw new ErrorChangan('Falta el usuario: vuelve a conectar', 'sesion');
-  const conf = await postCa('/user-apigw/vot-connect-conf-center/api/device/getConnConf',
-    { deviceId: s.deviceId, carId: id, deviceType: 1, confTimestamp: 0, deviceTimestamp: String(Date.now()) }, s);
-  const auth = await postCa('/user-apigw/vot-connect-auth-center/api/auth/getAuthTokenByUserId', { userId: s.userId }, s);
+  const conf = await postCaOtro('/user-apigw/vot-connect-conf-center/api/device/getConnConf', '/user-apigw/vot-connect-conf-center/api/device/appGetCarConfFunc',
+    { deviceId: s.deviceId, carId: id, deviceType: 1, confTimestamp: 0, deviceTimestamp: String(Date.now()) }, s, (d) => !!d?.mqttConnectionInfos);
+  const auth = await postCaOtro('/user-apigw/vot-connect-auth-center/api/auth/getAuthTokenByUserId', '/app-apigw/vot-auth/api/token/getAuthTokenByUserId',
+    { userId: s.userId }, s, (d) => !!d?.authToken);
   if (!auth?.authToken) throw new ErrorChangan('Changan no dio permiso para leer el coche');
   const info = conf?.mqttConnectionInfos?.[0] || {}, cluster = info.clusterInfos?.[0] || {};
   const host = String(cluster.brokerUrl || '').replace('ssl://', ''), puerto = +cluster.brokerPort || 8883;

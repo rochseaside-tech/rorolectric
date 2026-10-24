@@ -1,6 +1,6 @@
 // sw.js — guarda la app en el móvil para que funcione sin cobertura (también la lista de cargadores).
 // Los datos de la usuaria no pasan por aquí: viven en el almacenamiento del navegador.
-const VERSION = 'v22';
+const VERSION = 'v23';
 const CACHE = `rorolectric-${VERSION}`;
 
 const ARCHIVOS = [

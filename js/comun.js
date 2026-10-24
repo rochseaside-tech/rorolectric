@@ -66,6 +66,8 @@ function arrastrarParaCerrar(hoja, caja) {
   let inicioY = null, dy = 0, t0 = 0, arrastrando = false, desdeCabeza = false;
   caja.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 1) return;
+    // Dentro de un mapa, arrastrar es mover el mapa, nunca cerrar la hoja.
+    if (e.target.closest('.leaflet-container, [data-sin-arrastre]')) { inicioY = null; return; }
     inicioY = e.touches[0].clientY; t0 = Date.now(); dy = 0; arrastrando = false;
     desdeCabeza = !!e.target.closest('.hoja-cabeza');
   }, { passive: true });

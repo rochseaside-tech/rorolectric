@@ -112,15 +112,22 @@ export function elegirEnMapa(inicio) {
   return new Promise((ok) => {
     let mapa = null, hecho = false;
     abrirHoja(`<h2>Elige el sitio en el mapa</h2>
-      <p class="muy-suave" style="margin-top:0">Mueve el mapa hasta que la cruz quede encima del sitio.</p>
-      <div style="position:relative"><div id="mapa-elegir" class="mapa" style="height:52dvh;border-radius:14px"></div>
-        <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-100%);font-size:34px;pointer-events:none;z-index:500;filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))">📍</div></div>
-      <div class="botones"><button class="boton" id="este">Este sitio</button></div>`, async (caja) => {
+      <p class="muy-suave" style="margin-top:0">Mueve el mapa hasta que el 📍 quede encima del sitio. Con dos dedos, acercas o alejas.</p>
+      <div style="position:relative"><div id="mapa-elegir" class="mapa" style="height:62dvh;border-radius:14px"></div>
+        <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-100%);font-size:34px;pointer-events:none;z-index:500;filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))">📍</div>
+        <div class="mapa-botones"><button type="button" id="mas" aria-label="Acercar">＋</button><button type="button" id="menos" aria-label="Alejar">−</button><button type="button" id="yo" aria-label="Dónde estoy">◎</button></div></div>
+      <p id="aqui-es" class="suave" style="margin:10px 2px 0;min-height:1.4em"></p>
+      <div class="botones"><button class="boton" id="este">Este sitio</button><button class="boton sec" type="button" data-cerrar>Cancelar</button></div>`, async (caja) => {
       const centro = inicio || (await ubicacion()) || ultimaUbicacion();
       mapa = L.map(caja.querySelector('#mapa-elegir'), { zoomControl: false }).setView(centro, 14);
       capaMapa(mapa);
-      caja.querySelector('#este').onclick = async () => {
-        const c = mapa.getCenter(), punto = [+c.lat.toFixed(6), +c.lng.toFixed(6)];
+      caja.querySelector('#mas').onclick = () => mapa.zoomIn();
+      caja.querySelector('#menos').onclick = () => mapa.zoomOut();
+      caja.querySelector('#yo').onclick = async () => { const p = await ubicacion({ forzar: true }); if (p) mapa.setView(p, 16); else aviso('No sé dónde estás: activa la ubicación.'); };
+      // Como en Google Maps: debajo del mapa va diciendo qué hay en el 📍 (sin agobiar a Nominatim: 1 por segundo como mucho).
+      let elegido = null, pregunta = 0;
+      const nombrar = async () => {
+        const c = mapa.getCenter(), punto = [+c.lat.toFixed(6), +c.lng.toFixed(6)], n = ++pregunta;
         let nombre = 'Sitio elegido en el mapa', municipio = '';
         try {
           const r = await (await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&accept-language=es&zoom=17&lat=${punto[0]}&lon=${punto[1]}`)).json();
@@ -128,7 +135,20 @@ export function elegirEnMapa(inicio) {
           municipio = a.city || a.town || a.village || a.municipality || '';
           nombre = [r.name || (a.road && `${a.road}${a.house_number ? ' ' + a.house_number : ''}`), municipio].filter(Boolean).join(', ') || nombre;
         } catch { /* sin nombre: vale el punto */ }
-        hecho = true; mapa.remove(); cerrarHoja(); ok({ nombre, punto, municipio });
+        if (n !== pregunta) return null; // el mapa se ha movido mientras tanto
+        elegido = { nombre, punto, municipio };
+        const txt = caja.querySelector('#aqui-es'); if (txt) txt.textContent = `📍 ${nombre}`;
+        return elegido;
+      };
+      let espera = null;
+      mapa.on('movestart', () => { elegido = null; clearTimeout(espera); const t = caja.querySelector('#aqui-es'); if (t) t.textContent = ''; });
+      mapa.on('moveend', () => { clearTimeout(espera); espera = setTimeout(nombrar, 900); });
+      nombrar();
+      caja.querySelector('#este').onclick = async () => {
+        clearTimeout(espera);
+        const s = elegido || await nombrar() || elegido;
+        if (!s) return;
+        hecho = true; mapa.remove(); cerrarHoja(); ok(s);
       };
     });
     // Si cierra la hoja sin elegir
@@ -174,8 +194,8 @@ export function montarBuscador(input, { alElegir = null, conUbicacion = false } 
     if (t.length < 2) return;
     const fuera = await buscarFuera(t, s);
     if (yo !== turno) return; // ya ha escrito otra cosa
-    // Sin resultados: las otras formas de dar con el sitio (mapa, enlace).
-    const otras = fuera.length ? [] : fijas().filter((x) => x.accion !== 'aqui');
+    // Sin resultados: las otras formas de dar con el sitio (mapa, enlace). Con resultados, el mapa al final (como Google Maps).
+    const otras = fijas().filter((x) => (fuera.length ? x.accion === 'mapa' : x.accion !== 'aqui'));
     pintar([...propios, ...fuera, ...otras], fuera.length ? '' : '<div class="sug-espera">No encuentro nada así. Prueba con el pueblo, elígelo en el mapa o pega un enlace de Google Maps.</div>');
   };
 
@@ -199,7 +219,11 @@ export function montarBuscador(input, { alElegir = null, conUbicacion = false } 
   };
 
   input.addEventListener('input', () => { input.sitio = null; clearTimeout(espera); espera = setTimeout(sugerir, 250); });
-  input.addEventListener('focus', () => { if (!input.value.trim() || !input.sitio) sugerir(); });
+  // Con un sitio ya elegido: se selecciona el texto (lo que escribas lo sustituye) y salen las opciones fijas.
+  input.addEventListener('focus', () => {
+    if (input.value.trim() && input.sitio) { input.select(); pintar([...fijas(), ...mios('')]); }
+    else sugerir();
+  });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !caja.hidden && opciones.length && !input.sitio) { e.preventDefault(); elegir(opciones.find((x) => !x.accion) || opciones[0]); }
     if (e.key === 'Escape') caja.hidden = true;
