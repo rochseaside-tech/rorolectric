@@ -3,9 +3,11 @@
 // Filtros: atajos arriba (rápidos, gratis, tarjeta, favoritos) y el botón «Filtros» con todo lo demás.
 import { enZona, clasePin, abrirFicha, fechaLista, SERVICIOS, precioKwh, precioCorto, textoFunciona, estadoAhora, resumenAhora, textoAhora } from '../cargadores.js';
 import { claveCargador, notaDe, notas, bateria, ajustes, medido, lugares } from '../datos.js';
-import { ubicacion, ultimaUbicacion, esc, num, abrirHoja, cerrarHoja, capaMapa, buscarSitio, aviso } from '../comun.js';
+import { ubicacion, ultimaUbicacion, esc, num, abrirHoja, cerrarHoja, capaMapa, aviso } from '../comun.js';
+import { montarBuscador, buscarTexto } from '../buscador.js';
 import { distancia, kmCon, consumo } from '../calc.js';
 import { OPERADORES, operadorDe } from '../operadores.js';
+import { conectado, ultimoDelCoche, haceCuanto } from '../coche-vivo.js';
 
 const FILTROS_BASE = { minKw: 0, ccs: false, tipo2: false, gratis: false, tarjeta: false, h24: false, servicios: [], empresa: '', sinClientes: false, sinRotos: true, favoritos: false, compatibles: true, conPrecio: false, reservable: false };
 let filtros = leerFiltros();
@@ -75,13 +77,15 @@ export function pintar(raiz, [modo] = []) {
     e.preventDefault();
     const q = raiz.querySelector('#q'); q.blur();
     if (!q.value.trim()) return;
-    try { const s = await buscarSitio(q.value); mapa.setView(s.punto, 14); } catch (err) { aviso(err.message); }
+    try { const s = q.sitio || await buscarTexto(q.value); mapa.setView(s.punto, 15); } catch (err) { aviso(err.message); }
   };
+  montarBuscador(raiz.querySelector('#q'), { alElegir: (s) => { raiz.querySelector('#q').blur(); mapa?.setView(s.punto, 15); } });
   raiz.querySelector('#lista').onclick = () => abrirLista();
   // Cuando llegan las averías de la última hora, se repintan los puntos.
   alEstado = () => { if (mapa) dibujar(raiz); };
   window.addEventListener('estado-reve', alEstado);
   centrar(raiz, false);
+  pintarCoche();
 }
 
 // Los más cercanos (a ti o, si no se sabe dónde estás, al centro del mapa), con los filtros puestos.
@@ -134,10 +138,20 @@ function abrirLista(orden = 'cerca') {
 
 // «Hasta dónde llego»: círculo con lo que da la batería (hasta el 10 %), en línea recta
 // (por carretera se hace más camino, por eso se recorta un 20 %).
+// Dónde está aparcado el coche (MyChangan), si se sabe.
+const posCoche = () => (conectado() && ultimoDelCoche()?.posicion) || null;
+let marcaCoche = null;
+function pintarCoche() {
+  marcaCoche?.remove(); marcaCoche = null;
+  const p = posCoche(); if (!p || !mapa) return;
+  marcaCoche = L.marker(p, { zIndexOffset: 3000, icon: L.divIcon({ className: '', html: '<div style="font-size:26px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))">🚗</div>', iconSize: [30, 30], iconAnchor: [15, 15] }) })
+    .bindPopup(`<b>Tu coche</b><br><span class="muy-suave">Aparcado aquí según MyChangan (${esc(haceCuanto(ultimoDelCoche().fecha))})</span><br><a href="https://www.google.com/maps/dir/?api=1&destination=${p[0]},${p[1]}&travelmode=walking" target="_blank" rel="noopener">Cómo llegar andando</a>`).addTo(mapa);
+}
+
 function pintarRango() {
   aro?.remove(); aro = null;
   if (!verRango || !mapa) return;
-  const centro = dondeEstoy || [mapa.getCenter().lat, mapa.getCenter().lng];
+  const centro = dondeEstoy || posCoche() || [mapa.getCenter().lat, mapa.getCenter().lng];
   const km = kmCon(Math.max(0, bateria().pct - 10), consumo('mixto', null, ajustes(), medido())) * 0.8;
   aro = L.layerGroup([
     L.circle(centro, { radius: km * 1000, color: '#2BB8F0', weight: 2, fillOpacity: 0.06, interactive: false }),
@@ -197,7 +211,7 @@ function abrirFiltros(raiz) {
     <label class="campo"><span>Empresa</span><select id="empresa"><option value="">Todas</option>
       ${OPERADORES.map((o) => `<option value="${o.id}" ${f.empresa === o.id ? 'selected' : ''}>${esc(o.nombre)}</option>`).join('')}</select></label>
     <label class="campo"><span>Mis cargadores</span><div class="chips">${chip('favoritos', 1, '★ Solo favoritos', f.favoritos)}</div></label>
-    <p class="muy-suave">«Gratis», «tarjeta», horario y servicios salen del registro oficial y de OpenStreetMap: si un cargador no los tiene apuntados, no aparece al filtrar. Para saber si está libre ahora, abre su ficha: lleva un enlace a REVE (Red Eléctrica). «Se puede reservar» sale de REVE en España (se va completando estos días) y del registro oficial en Francia.</p>
+    <p class="muy-suave">«Gratis», «tarjeta», horario y servicios salen del registro oficial y de OpenStreetMap: si un cargador no los tiene apuntados, no aparece al filtrar. Si está libre ahora lo ves en su ficha (España: REVE al momento; Francia y Portugal: la última hora). «Se puede reservar» sale de REVE en España (se va completando estos días) y del registro oficial en Francia.</p>
     <div class="botones"><button class="boton" id="ver">Ver cargadores</button><button class="boton sec" id="limpiar">Quitar filtros</button></div>`, (caja) => {
     caja.onclick = (e) => {
       const b = e.target.closest('[data-grupo]');
@@ -304,4 +318,4 @@ function pinPrecio(c) {
 
 let alEstado = null;
 export function salir() {
-  if (alEstado) window.removeEventListener('estado-reve', alEstado); mapa?.remove(); mapa = null; capa = null; yo = null; aro = null; }
+  if (alEstado) window.removeEventListener('estado-reve', alEstado); mapa?.remove(); mapa = null; capa = null; yo = null; aro = null; marcaCoche = null; }

@@ -21,8 +21,9 @@ export function pintar(raiz) {
       <h3>Todo lo demás: ROROLECTRIC</h3>
       <ul>
         <li><b>Mapa con todos los cargadores de España</b> (los del registro oficial del Ministerio, donde cada empresa está obligada a apuntarlos, más los de OpenStreetMap). Sustituye a PlugShare, Chargemap y Electromaps para buscar.</li>
-        <li><b>Viaje</b>: dónde parar y cuánto cargar. Sustituye a ABRP para viajes normales.</li>
+        <li><b>Viaje</b>: dónde parar y cuánto cargar, con todos los cargadores de la ruta para elegir el que quieras (te dice con qué % llegas a cada uno) y la hora de llegada. Sustituye a ABRP.</li>
         <li><b>Carga en casa</b> a la hora más barata, <b>gastos</b>, <b>recordatorios</b> y esta guía.</li>
+        ${deepal ? '<li><b>El estado de tu coche</b>: con tu cuenta de MyChangan (Ajustes → Conectar con MyChangan), ROROLECTRIC lee la batería, si está cargando, si está cerrado, las ruedas y dónde está aparcado. Para encender el clima o abrir sigues necesitando MyChangan.</li>' : ''}
       </ul>
       <h3>Para pagar en la calle (0 o 1 app)</h3>
       <ol>

@@ -1,12 +1,60 @@
 // Inicio: batería y autonomía, «¿llego?», recordatorios y el gasto del mes.
-import { COCHE, TIPOS_VIA, ajustes, bateria, ponerBateria, cargas, hechos, marcarHecho, hoyISO, sesion, medido, tempManual, ponerTempManual, cambiarAjuste, lugares } from '../datos.js';
+import { COCHE, TIPOS_VIA, ajustes, bateria, ponerBateria, cargas, hechos, marcarHecho, hoyISO, sesion, medido, tempManual, ponerTempManual, cambiarAjuste, lugares, viajeEnCurso } from '../datos.js';
 import { consumo, kmCon, pctTras, climaKwDe, resumen, pctTrasMinutos, horasAC, minutosDC, tramo } from '../calc.js';
 import { esc, num, euros, anillo, temperatura, aviso, hora, abrirHoja, cerrarHoja, ubicacion, rutaEnCoche, duracion } from '../comun.js';
 import { abrirElegirCoche } from '../elegir-coche.js';
+import { puedeConectar, conectado, leerCoche, ultimoDelCoche, haceCuanto as haceDelCoche, bar, avisoRuedas } from '../coche-vivo.js';
 
 let via = 'mixto';
 let llegoA = null; // sitio guardado elegido en «¿Llego?»
 let temp = null, tempReal = null;
+let tocado = false; // si mueve la barra a mano, lo que llegue del coche no se la pisa
+
+// «Tu coche ahora» (MyChangan): lo pide al coche y lo pinta; si llega un % nuevo, mueve la barra.
+async function preguntarAlCoche(raiz, forzar = false) {
+  const el = raiz.querySelector('#vivo');
+  if (el) el.querySelector('#vivo-estado')?.replaceChildren('Preguntando al coche…');
+  try {
+    const e = await leerCoche({ forzar });
+    if (!raiz.querySelector('#vivo')) return; // ya se fue de esta pantalla
+    if (e?.pct != null && !tocado) {
+      const d = raiz.querySelector('#desliza');
+      d.value = e.pct; raiz.querySelector('#pct').innerHTML = `${e.pct}<small>%</small>`;
+      raiz.querySelector('#anillo svg').outerHTML = anillo(e.pct);
+      raiz.querySelector('#pct-origen').textContent = `🔗 Lo dice el coche · ${haceDelCoche(e.fecha)}`;
+      actualizar(raiz); pintarRecordatorios(raiz);
+    }
+    pintarVivo(raiz);
+  } catch (err) {
+    if (!raiz.querySelector('#vivo')) return;
+    pintarVivo(raiz, err.message);
+  }
+}
+
+function pintarVivo(raiz, error = '') {
+  const el = raiz.querySelector('#vivo'); if (!el) return;
+  const e = ultimoDelCoche();
+  const filas = [];
+  if (e) {
+    const cg = e.carga || {};
+    if (cg.estado === 'cargando') filas.push(['⚡', `Cargando${cg.dc ? ' en rápida' : ''}`, cg.minutos ? `Lista en ${duracion(cg.minutos)} (sobre las ${hora(new Date(new Date(e.fecha).getTime() + cg.minutos * 60e3))})` : 'Según el coche']);
+    else if (cg.estado === 'enchufado') filas.push(['🔌', 'Enchufado, sin cargar', 'Puede estar esperando a la hora programada o ya lleno']);
+    if (e.kmCoche != null) filas.push(['🛣️', `${num(e.kmCoche)} km según el coche`, `La app calcula ≈ ${raiz.querySelector('#km')?.textContent || '—'} km con tu consumo y el tiempo de hoy`]);
+    const abierto = [e.puertasAbiertas && 'una puerta', e.maleteroAbierto && 'el maletero', e.ventanasAbiertas && 'alguna ventanilla'].filter(Boolean);
+    if (abierto.length) filas.push(['⚠️', `Abierto: ${abierto.join(', ')}`, 'Según el último dato del coche']);
+    else if (e.cerrado === false) filas.push(['🔓', 'Sin cerrar con llave', 'Ciérralo desde la app MyChangan si no estás al lado']);
+    else if (e.cerrado) filas.push(['🔒', 'Cerrado', 'Puertas, maletero y ventanillas']);
+    const ruedas = avisoRuedas(e.presiones);
+    if (e.presiones) filas.push(['🛞', ruedas || 'Ruedas bien', e.presiones.map((p) => (bar(p) == null ? '—' : bar(p).toFixed(1).replace('.', ','))).join(' · ') + ' bar (del. izq., del. dch., tras. izq., tras. dch.)']);
+    if (e.tempDentro != null) filas.push(['🌡️', `${num(e.tempDentro)} °C dentro`, e.clima ? 'Con el clima puesto' : 'Clima apagado']);
+    if (e.posicion) filas.push(['📍', 'Dónde está aparcado', `<a href="https://www.google.com/maps/search/?api=1&query=${e.posicion[0]},${e.posicion[1]}" target="_blank" rel="noopener">Abrir en el mapa</a>`]);
+    if (e.odometro) filas.push(['🔢', `${num(e.odometro)} km en total`, 'Cuentakilómetros (lo uso para el aviso de la revisión)']);
+  }
+  el.innerHTML = `<div class="tarjeta-cab"><h2>Tu coche ahora</h2><button class="boton mini sec" id="vivo-act" style="width:auto">↻ Actualizar</button></div>
+    <p class="muy-suave" id="vivo-estado" style="margin:-6px 0 8px">${error ? `⚠️ ${esc(error)}` : e ? `🔗 Datos de MyChangan · el coche los mandó ${esc(haceDelCoche(e.fecha))}` : 'Preguntando al coche…'}</p>
+    ${filas.length ? `<ul class="lista">${filas.map(([i, t, s]) => `<li><span class="icono">${i}</span><div class="cuerpo"><b>${t}</b><span>${s}</span></div></li>`).join('')}</ul>` : ''}`;
+  el.querySelector('#vivo-act').onclick = () => preguntarAlCoche(raiz, true);
+}
 
 export function pintar(raiz) {
   const b = bateria();
@@ -18,19 +66,25 @@ export function pintar(raiz) {
     viva = `<a class="carga-viva" href="#/cargar"><span class="latido"></span><span style="flex:1"><b>Cargando · ${Math.floor(pct)} %</b>
       <span class="suave" style="font-size:14px">${pct >= s.a - 0.05 ? '¡Ya debería estar lista!' : `Al ${s.a} % sobre las ${hora(fin)}`}</span></span><span style="font-size:24px;color:var(--texto3)">›</span></a>`;
   }
+  const v = viajeEnCurso();
+  if (v && Date.now() - v.empezado < 24 * 3600e3) {
+    viva += `<a class="carga-viva" href="#/viaje"><span style="font-size:22px">🚗</span><span style="flex:1"><b>De viaje a ${esc(v.destino.nombre)}</b>
+      <span class="suave" style="font-size:14px">${v.paradas.length ? `Paradas: ${v.paradas.map((p) => esc(p.nombre)).join(' → ')}` : 'Sin paradas'} · toca para recalcular</span></span><span style="font-size:24px;color:var(--texto3)">›</span></a>`;
+  }
   raiz.innerHTML = `${viva}
     <section class="tarjeta heroe">
       <div class="anillo" id="anillo">${anillo(b.pct)}<div class="anillo-centro"><b id="pct">${b.pct}<small>%</small></b><span>batería</span></div></div>
       <div class="km-grande">≈ <em id="km">—</em> km</div>
       <div class="muy-suave" id="km-nota"></div>
       <input type="range" min="0" max="100" step="1" value="${b.pct}" id="desliza" aria-label="Batería">
-      <div class="muy-suave">Mueve la barra al % que marque el coche${b.fecha ? ` · último: ${esc(haceCuanto(b.fecha))}` : ''}</div>
+      <div class="muy-suave" id="pct-origen">${b.delCoche && conectado() ? `🔗 Lo dice el coche · ${esc(haceDelCoche(b.fecha))}` : `Mueve la barra al % que marque el coche${b.fecha ? ` · último: ${esc(haceCuanto(b.fecha))}` : ''}`}</div>
       <div class="chips" id="vias" style="justify-content:center;margin-top:12px">
         ${TIPOS_VIA.map(([k, t]) => `<button class="chip ${k === via ? 'activo' : ''}" data-via="${k}">${t}</button>`).join('')}
       </div>
       <div><button class="tiempo-chip" id="tiempo" style="border:0;font:inherit;font-size:13px;cursor:pointer">🌡️ mirando el tiempo…</button></div>
       <div><button class="tiempo-chip" id="mi-coche" style="border:0;font:inherit;font-size:13px;cursor:pointer">🚗 ${esc(COCHE.nombre)} · cambiar</button></div>
     </section>
+    ${conectado() ? '<section class="tarjeta" id="vivo"></section>' : ''}
 
     <a class="tarjeta" href="#/mapa/aqui" style="display:flex;gap:14px;align-items:center;text-decoration:none;color:inherit">
       <span style="font-size:30px">📍</span>
@@ -63,7 +117,11 @@ export function pintar(raiz) {
   raiz.querySelector('#mi-coche').onclick = () => abrirElegirCoche();
   const desliza = raiz.querySelector('#desliza');
   desliza.oninput = () => { raiz.querySelector('#pct').innerHTML = `${desliza.value}<small>%</small>`; raiz.querySelector('#anillo svg').outerHTML = anillo(+desliza.value); actualizar(raiz); };
-  desliza.onchange = () => { ponerBateria(+desliza.value); pintarRecordatorios(raiz); };
+  desliza.onchange = () => {
+    tocado = true; ponerBateria(+desliza.value); pintarRecordatorios(raiz);
+    raiz.querySelector('#pct-origen').textContent = 'Puesto a mano';
+  };
+  tocado = false;
   raiz.querySelector('#vias').onclick = (e) => {
     const c = e.target.closest('[data-via]'); if (!c) return;
     via = c.dataset.via;
@@ -93,6 +151,7 @@ export function pintar(raiz) {
   actualizar(raiz);
   pintarRecordatorios(raiz);
   pintarMes(raiz);
+  if (conectado()) { pintarVivo(raiz); preguntarAlCoche(raiz); }
   temp = tempManual();
   raiz.querySelector('#tiempo').onclick = () => editarTemp(raiz);
   temperatura().then((t) => { tempReal = t; if (tempManual() == null) temp = t; if (raiz.querySelector('#desliza')) actualizar(raiz); }); // si ya se fue de esta pantalla, nada
@@ -222,6 +281,7 @@ function pintarRecordatorios(raiz) {
   // Los datos solo viven en este móvil: copia cada mes si hay algo que perder.
   if (cargas().length >= 3 && (!h.copia || dias(h.copia) <= -30)) lista.push({ icono: '💾', titulo: 'Guarda una copia de tus datos',
     texto: 'Tus cargas y notas solo están en este móvil. Si lo pierdes o lo cambias, con la copia lo recuperas todo.', enlace: '#/diario', urgente: !h.copia && cargas().length >= 10 });
+  if (puedeConectar() && !conectado()) lista.push({ icono: '🔗', titulo: 'Conecta la app con tu coche', texto: 'Con tu cuenta de MyChangan: la batería, si está cargando y si está cerrado se ponen solos.', enlace: '#/ajustes/coche' });
   if (!a.matriculacion) lista.push({ icono: '✍️', titulo: 'Completa tus datos', texto: 'Fecha de matriculación, revisión y seguro: así te aviso a tiempo.', enlace: '#/ajustes' });
 
   const el = raiz.querySelector('#recordatorios');

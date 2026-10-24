@@ -449,8 +449,11 @@ function bloqueMio(c) {
 }
 
 // Ficha de un cargador: hoja que sube desde abajo (cabe todo y se puede desplazar).
-export function abrirFicha(c) {
-  abrirHoja(`<div class="ficha">${htmlPopup(c)}</div>`, (caja) => {
+// «boton»: botón extra arriba de la ficha (p. ej. «Parar aquí» desde Viaje): { texto, alPulsar }.
+export function abrirFicha(c, { boton = null } = {}) {
+  const extra = boton ? `<button class="boton" data-extra style="margin-bottom:12px">${esc(boton.texto)}</button>` : '';
+  abrirHoja(`<div class="ficha">${extra}${htmlPopup(c)}</div>`, (caja) => {
+    caja.querySelector('[data-extra]')?.addEventListener('click', () => { cerrarHoja(); boton.alPulsar(); });
     caja.addEventListener('click', (e) => { const b = e.target.closest('[data-accion]'); if (b) accionFicha(b, c); });
     montarCoste(caja, c);
     montarAhora(caja, c);

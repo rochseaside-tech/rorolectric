@@ -258,3 +258,23 @@ table.ficha td:last-child { text-align: right; color: var(--texto); font-weight:
 .vacio .emoji { font-size: 42px; display: block; margin-bottom: 8px; }
 .oculto { display: none !important; }
 .tiempo-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--tarjeta2); padding: 6px 12px; border-radius: 999px; font-size: 13px; color: var(--texto2); margin-top: 10px; }
+
+/* Viaje: itinerario con mandos por parada */
+.itinerario .cuerpo span { display: block; }
+.itinerario .cuerpo a { text-decoration: none; }
+.itinerario li { position: relative; }
+.parada-mandos { flex-basis: 100%; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 0 0 52px; }
+.parada-mandos .chip { padding: 4px 12px; font-size: 16px; line-height: 1.2; }
+
+/* Buscador de sitios: desplegable de sugerencias bajo el cuadro */
+.con-sugerencias { position: relative; }
+.sugerencias { position: absolute; left: 0; right: 0; top: 100%; z-index: 900; margin-top: 4px; background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 14px; box-shadow: var(--sombra); max-height: 58dvh; overflow: auto; overscroll-behavior: contain; }
+.sug { display: flex; gap: 10px; align-items: center; width: 100%; padding: 11px 14px; border: 0; border-bottom: 1px solid var(--borde); background: none; color: var(--texto); font: inherit; text-align: left; cursor: pointer; }
+.sug:last-child { border-bottom: 0; }
+.sug:active, .sug:hover { background: var(--tarjeta2); }
+.sug-i { flex: none; width: 24px; text-align: center; font-size: 17px; }
+.sug-t { min-width: 0; }
+.sug-t b { display: block; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sug-t small { display: block; color: var(--texto3); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sug-espera { padding: 11px 14px; color: var(--texto3); font-size: 13px; }
+.mapa-busca { position: relative; }

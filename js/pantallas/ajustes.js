@@ -1,6 +1,12 @@
 // Ajustes: tarifa de luz, cargador de casa, consumo real, fechas para avisos, tema.
 import { COCHE, CARGADORES_CASA, TIPOS_VIA, CONSUMO_TIPICO, ajustes, cambiarAjuste, cambiarAjusteDe, borrarTodo, corregirCoche, lugares, guardarLugar, borrarLugar } from '../datos.js';
-import { campo, aviso, esc, num, buscarSitio, ubicacion } from '../comun.js';
+import { campo, aviso, esc, num, ubicacion, abrirHoja, certeza } from '../comun.js';
+import { montarBuscador, buscarTexto } from '../buscador.js';
+import { fechaLista, cargarTodos } from '../cargadores.js';
+import { abrirElegirCoche } from '../elegir-coche.js';
+import { esAndroid } from '../operadores.js';
+import { conexion } from '../datos.js';
+import { puedeConectar, conectado, pedirCodigo, conectar, desconectar, leerCoche, haceCuanto } from '../coche-vivo.js';
 
 // «Mis sitios»: los sitios habituales de quien usa este móvil. Salen como botones en Coche («¿Llego?»), Viaje y Mapa.
 const EMOJIS = ['🏠', '💼', '👪', '👴', '🏋️', '🛒', '🏫', '🏖️', '⛰️', '📍'];
@@ -59,7 +65,7 @@ function pintarSitios(el, editando = null, abierto = false) {
     const dir = el.querySelector('#s-dir').value.trim();
     if (!dir) { if (editando) guardarCon({}); else aviso('Pon la dirección o toca «Es donde estoy ahora»'); return; }
     const b = el.querySelector('#s-guardar'); b.disabled = true; b.textContent = 'Buscando…';
-    try { const s = await buscarSitio(dir); guardarCon({ punto: s.punto, dir: s.nombre, municipio: s.municipio }); }
+    try { const s = el.querySelector('#s-dir').sitio || await buscarTexto(dir); guardarCon({ punto: s.punto, dir: [s.nombre, s.detalle].filter(Boolean).join(', ').slice(0, 90), municipio: s.municipio }); }
     catch (err) { aviso(err.message); b.disabled = false; b.textContent = 'Guardar sitio'; }
   };
   el.querySelector('#s-aqui').onclick = async () => {
@@ -75,6 +81,7 @@ function pintarSitios(el, editando = null, abierto = false) {
     guardarCon({ punto: p, dir, municipio });
   };
   el.querySelector('#s-cancelar')?.addEventListener('click', () => pintarSitios(el));
+  montarBuscador(el.querySelector('#s-dir'));
   botonesLista(el);
 }
 // «Cambiar» y «✕» de cada sitio guardado.
@@ -85,11 +92,75 @@ function botonesLista(el) {
   }; });
   el.querySelectorAll('[data-editar]').forEach((b) => { b.onclick = () => pintarSitios(el, lugares().find((l) => l.id === b.dataset.editar)); });
 }
-import { fechaLista, cargarTodos } from '../cargadores.js';
-import { abrirElegirCoche } from '../elegir-coche.js';
-import { esAndroid } from '../operadores.js';
 
-export function pintar(raiz) {
+// Conexión con MyChangan: correo → código que manda Changan → conectado.
+function pintarConexion(el, paso = null) {
+  const c = conexion() || {};
+  if (conectado()) {
+    const u = c.ultimo;
+    el.innerHTML = `<h2>🔗 Conectado con MyChangan</h2>
+      <p class="suave" style="margin-top:0">${esc(c.coche?.modelo || 'Tu Deepal')}${c.coche?.vin ? ` · bastidor …${esc(c.coche.vin.slice(-6))}` : ''}<br><span class="muy-suave">Cuenta ${esc(c.email || '')}</span></p>
+      <p class="muy-suave" id="cx-ultimo">${u ? `Último dato del coche: ${esc(haceCuanto(u.fecha))}${u.pct != null ? ` · ${u.pct} %` : ''}` : 'Aún no he leído el coche.'}</p>
+      <div class="botones"><button class="boton sec" type="button" id="cx-leer">↻ Leer el coche ahora</button>
+        <button class="boton sec" type="button" id="cx-todo">Ver todo lo que manda el coche</button>
+        <button class="boton peligro" type="button" id="cx-salir">Desconectar</button></div>`;
+    el.querySelector('#cx-leer').onclick = async (ev) => {
+      ev.target.disabled = true; ev.target.textContent = 'Preguntando al coche…';
+      try { const e = await leerCoche({ forzar: true }); aviso(e?.pct != null ? `El coche dice: ${e.pct} %` : 'Leído'); } catch (err) { aviso(err.message); }
+      pintarConexion(el);
+    };
+    el.querySelector('#cx-todo').onclick = () => {
+      const crudo = conexion()?.crudo || {};
+      const filas = Object.entries(crudo).filter(([k]) => !k.startsWith('_')).sort(([a], [b]) => a.localeCompare(b));
+      abrirHoja(`<h2>Datos del coche</h2><p class="muy-suave">Tal cual los manda el coche a Changan (nombres internos). Útil si algo no cuadra.</p>
+        ${filas.length ? `<div style="font:12px/1.6 ui-monospace,Menlo,monospace;word-break:break-all">${filas.map(([k, v]) => `<div><b>${esc(k)}</b>: ${esc(typeof v === 'object' ? JSON.stringify(v) : v)}</div>`).join('')}</div>` : '<p class="suave">Aún no hay datos: toca «Leer el coche ahora».</p>'}`);
+    };
+    el.querySelector('#cx-salir').onclick = (ev) => {
+      if (!ev.target.dataset.seguro) { ev.target.dataset.seguro = '1'; ev.target.textContent = 'Toca otra vez para desconectar'; return; }
+      desconectar(); aviso('Desconectado'); pintarConexion(el);
+    };
+    return;
+  }
+  const esperandoCodigo = paso === 'codigo';
+  el.innerHTML = `<h2>🔗 Conectar con MyChangan</h2>
+    ${c.error ? `<div class="resultado ambar" style="margin-top:0"><p style="margin:0">${esc(c.error)}</p></div>` : ''}
+    <p class="suave" style="margin-top:0">Con tu cuenta de MyChangan, la app lee de tu coche la <b>batería</b>, si está <b>cargando</b> y cuánto le falta, si está <b>cerrado</b>, la <b>presión de las ruedas</b> y <b>dónde está aparcado</b>. Solo lee: no abre ni manda nada al coche.</p>
+    <details class="guia" style="margin:0 0 12px"><summary><span class="emoji">⚠️</span>Antes de conectar, lee esto</summary><div class="dentro">
+      <p class="suave" style="margin-top:0"><b>Changan solo deja una sesión abierta por cuenta.</b> Si conectas aquí con la misma cuenta que tienes en la app MyChangan, esa app te pedirá entrar otra vez (y al revés) ${certeza('alta')}.</p>
+      <p class="suave"><b>Lo mejor, una cuenta solo para ROROLECTRIC:</b></p>
+      <ol class="suave" style="padding-left:20px;margin:0">
+        <li>En la app MyChangan, cierra sesión y crea una cuenta nueva con <b>otro correo</b>.</li>
+        <li>Vuelve a entrar con tu cuenta de siempre y <b>comparte el coche</b> con la nueva.</li>
+        <li>Conecta aquí con la cuenta nueva. Tu móvil sigue con la de siempre.</li></ol>
+      <p class="muy-suave" style="margin-top:8px">No es una conexión oficial de Changan: la han descifrado otros dueños de Deepal (probada con un S05 de España). Si Changan cambia su sistema, puede dejar de ir un tiempo ${certeza('media')}. Tu sesión se guarda solo en este móvil y no va en las copias de seguridad.</p>
+    </div></details>
+    ${esperandoCodigo ? `<p class="suave">Te he mandado un código a <b>${esc(c.email)}</b> (mira también el correo no deseado).</p>
+      <label class="campo"><span>Código del correo</span><input id="cx-codigo" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="Ej. 123456"></label>
+      <div class="botones"><button class="boton" type="button" id="cx-entrar">Conectar</button><button class="boton sec" type="button" id="cx-otro">Cambiar el correo o volver a mandarlo</button></div>`
+    : `<label class="campo"><span>Correo de tu cuenta MyChangan</span><input id="cx-email" type="email" autocomplete="email" value="${esc(c.email || '')}" placeholder="tu@correo.com"></label>
+      <button class="boton" type="button" id="cx-pedir">Mandarme el código</button>`}`;
+  el.querySelector('#cx-pedir')?.addEventListener('click', async (ev) => {
+    const email = el.querySelector('#cx-email').value.trim();
+    if (!email) { aviso('Pon el correo'); return; }
+    ev.target.disabled = true; ev.target.textContent = 'Pidiendo el código…';
+    try { await pedirCodigo(email); pintarConexion(el, 'codigo'); el.querySelector('#cx-codigo')?.focus(); }
+    catch (err) { aviso(err.message); ev.target.disabled = false; ev.target.textContent = 'Mandarme el código'; }
+  });
+  el.querySelector('#cx-otro')?.addEventListener('click', () => pintarConexion(el));
+  el.querySelector('#cx-entrar')?.addEventListener('click', async (ev) => {
+    const codigo = el.querySelector('#cx-codigo').value.trim();
+    if (!codigo) { aviso('Pon el código del correo'); return; }
+    ev.target.disabled = true; ev.target.textContent = 'Conectando…';
+    try {
+      const coche = await conectar(codigo);
+      aviso(`Conectado: ${coche.modelo}`);
+      pintarConexion(el);
+      leerCoche({ forzar: true }).then(() => pintarConexion(el)).catch((err) => { const u = el.querySelector('#cx-ultimo'); if (u) u.textContent = `⚠️ ${err.message}`; });
+    } catch (err) { aviso(err.message); ev.target.disabled = false; ev.target.textContent = 'Conectar'; }
+  });
+}
+
+export function pintar(raiz, [abrir] = []) {
   const a = ajustes();
   raiz.innerHTML = `
     <div class="titulo-pantalla"><h1>Ajustes</h1></div>
@@ -98,6 +169,7 @@ export function pintar(raiz) {
       <div class="fila"><div><b style="font-size:17px">${esc(COCHE.nombre)}</b><div class="muy-suave">${num(COCHE.util, 1)} kWh útiles · ${COCHE.wltpKm} km oficiales · batería ${COCHE.quimica}</div></div>
         <button class="boton mini sec" id="cambiar-coche" style="flex:none">Cambiar</button></div>
     </section>
+    ${puedeConectar() ? '<section class="tarjeta" id="conexion"></section>' : ''}
 
     <section class="tarjeta" id="mis-sitios"></section>
     <form id="f">
@@ -180,6 +252,8 @@ export function pintar(raiz) {
 
   raiz.querySelector('#cambiar-coche').onclick = () => abrirElegirCoche();
   pintarSitios(raiz.querySelector('#mis-sitios'));
+  const cx = raiz.querySelector('#conexion');
+  if (cx) { pintarConexion(cx); if (abrir === 'coche') setTimeout(() => cx.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }
   raiz.querySelector('#avisos').onclick = (e) => {
     const b = e.target.closest('[data-aviso]'); if (!b) return;
     const k = b.dataset.aviso, v = !ajustes().avisos[k];

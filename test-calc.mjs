@@ -116,6 +116,19 @@ assert.equal(planConCargadores(400, 100, 18, [barato, caro], { ...op, criterio: 
 assert.equal(planConCargadores(400, 100, 18, [barato, caro], { ...op, criterio: 'barato', precioDe: (c) => c.precio }).paradas[0].cargador, barato);
 console.log('Viaje más barato ✔');
 
+// Paradas elegidas: se para donde dices aunque no haga falta, con tu «cargar hasta»; lo que evitas no sale.
+const pronto = { kmRuta: 60, desvio: 0, potencia: 150 }, medio = { kmRuta: 250, desvio: 0, potencia: 150 };
+const conFija = planConCargadores(300, 100, 18, [pronto, medio, caro], { ...op, obligadas: [{ c: pronto, hasta: 95 }] });
+assert.equal(conFija.paradas[0].cargador, pronto);
+assert.ok(conFija.paradas[0].fija && conFija.paradas[0].hasta === 95);
+const sinCaro = planConCargadores(400, 100, 18, [barato, caro], { ...op, evitar: new Set([caro]) });
+assert.ok(sinCaro.paradas.every((p) => p.cargador !== caro));
+// Una elegida a la que no se llega: antes se mete una automática.
+const lejos = { kmRuta: 500, desvio: 0, potencia: 150 }, antes = { kmRuta: 280, desvio: 0, potencia: 150 };
+const dos = planConCargadores(560, 90, 18, [antes, lejos], { ...op, obligadas: [{ c: lejos }] });
+assert.deepEqual(dos.paradas.map((p) => p.cargador), [antes, lejos]);
+console.log('Paradas elegidas ✔');
+
 // Viento: de cara gasta más, a favor menos, de lado casi igual.
 import { factorViento, rumbo } from './js/calc.js';
 const t = (desde) => [{ km: 100, rumbo: 0, viento: 30, desde }];

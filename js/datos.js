@@ -147,7 +147,11 @@ function leer() {
     hechos: guardado.hechos || {},   // recordatorios marcados: { neumaticos: '2026-10-15' }
     notas: guardado.notas || {},
     lugares: guardado.lugares || [], // sitios habituales de quien usa este móvil: { id, nombre, emoji, dir, punto: [lat, lon], municipio }
-    sesion: guardado.sesion || null, // carga en curso: { inicio, de, a, kw, ac, precio, lugar, sitio }     // por cargador: { '41.5568,2.1022': { fav, nota, estado, fecha, nombre } }
+    sesion: guardado.sesion || null, // carga en curso: { inicio, de, a, kw, ac, precio, lugar, sitio }
+    // Conexión con la nube del fabricante (MyChangan): { email, sesion, carId, coche, ultimo } — ver coche-vivo.js
+    conexion: guardado.conexion || null,
+    // Viaje en curso (para «recalcular desde aquí» y el aviso en Inicio): { hasta, destino, salida, paradas, km }
+    viaje: guardado.viaje || null,
   };
 }
 
@@ -171,10 +175,17 @@ export function elegirCoche(id, manual = null) {
 export function cambiarAjusteDe(grupo, clave, valor) { estado.ajustes[grupo][clave] = valor; guardar(); }
 
 export const bateria = () => estado.bateria;
-export function ponerBateria(pct) {
-  estado.bateria = { pct: Math.max(0, Math.min(100, Math.round(pct))), fecha: new Date().toISOString() };
+// «delCoche»: el % lo ha dicho el propio coche (MyChangan), con la hora a la que lo midió.
+export function ponerBateria(pct, { fecha = null, delCoche = false } = {}) {
+  estado.bateria = { pct: Math.max(0, Math.min(100, Math.round(pct))), fecha: fecha || new Date().toISOString(), ...(delCoche ? { delCoche: true } : {}) };
   guardar();
 }
+
+export const conexion = () => estado.conexion;
+export function guardarConexion(c) { estado.conexion = c; guardar(); }
+
+export const viajeEnCurso = () => estado.viaje;
+export function guardarViaje(v) { estado.viaje = v; guardar(); }
 
 export const cargas = () => [...estado.cargas].sort((a, b) => (b.fecha + b.id).localeCompare(a.fecha + a.id));
 export function guardarCarga(c) {
@@ -221,11 +232,13 @@ export function guardarLugar(l) {
 export function borrarLugar(id) { estado.lugares = estado.lugares.filter((x) => x.id !== id); guardar(); }
 export const lugarPorNombre = (t) => estado.lugares.find((l) => l.nombre.trim().toLowerCase() === String(t || '').trim().toLowerCase()) || null;
 
-export function exportar() { return JSON.stringify({ app: 'rorolectric', version: 1, ...estado }, null, 1); }
+// La copia NO lleva la sesión de MyChangan: es una llave de la cuenta y la copia acaba en correos y nubes.
+export function exportar() { const { conexion: _, ...resto } = estado; return JSON.stringify({ app: 'rorolectric', version: 1, ...resto }, null, 1); }
 export function importar(texto) {
   const d = JSON.parse(texto);
   if (d.app !== 'rorolectric') throw new Error('Este archivo no es una copia de ROROLECTRIC');
-  localStorage.setItem(CLAVE, JSON.stringify({ ajustes: d.ajustes, bateria: d.bateria, cargas: d.cargas, hechos: d.hechos, notas: d.notas, lugares: d.lugares }));
+  // La conexión con el coche de este móvil se conserva (la copia no la lleva).
+  localStorage.setItem(CLAVE, JSON.stringify({ ajustes: d.ajustes, bateria: d.bateria, cargas: d.cargas, hechos: d.hechos, notas: d.notas, lugares: d.lugares, conexion: estado.conexion }));
   estado = leer();
 }
 export function borrarTodo() { try { localStorage.removeItem(CLAVE); } catch { /* nada */ } estado = leer(); }

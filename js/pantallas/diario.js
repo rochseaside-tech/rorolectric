@@ -3,6 +3,7 @@ import { COCHE, ajustes, cambiarAjuste, cargas, guardarCarga, borrarCarga, hoyIS
 import { resumen, co2Ahorrado, saludBateria } from '../calc.js';
 import { tarjetaSuscripciones } from '../suscripciones.js';
 import { esc, num, euros, fechaBonita, abrirHoja, cerrarHoja, aviso, campo, certeza } from '../comun.js';
+import { conectado, ultimoDelCoche } from '../coche-vivo.js';
 
 // Salud de la batería, calculada con las cargas apuntadas (kWh metidos y % que subió).
 function tarjetaSalud(todas) {
@@ -87,8 +88,21 @@ export function pintar(raiz, [accion] = []) {
   raiz.querySelector('#exportar').onclick = guardarCopia;
   raiz.querySelector('#csv')?.addEventListener('click', () => compartirArchivo(hojaCalculo(todas), `rorolectric-gastos-${hoyISO()}.csv`, 'text/csv'));
   raiz.querySelector('#importar').onchange = async (e) => {
-    const f = e.target.files[0]; if (!f) return;
-    try { importar(await f.text()); aviso('Copia restaurada'); pintar(raiz); } catch (err) { aviso(err.message || 'No se pudo leer el archivo'); }
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    // Antes de machacar nada: qué trae la copia y qué hay ahora.
+    let texto, d;
+    try { texto = await f.text(); d = JSON.parse(texto); if (d.app !== 'rorolectric') throw new Error('Este archivo no es una copia de ROROLECTRIC'); }
+    catch (err) { aviso(err.message.startsWith('Este') ? err.message : 'No se pudo leer el archivo'); return; }
+    const ultima = (d.cargas || []).map((c) => c.fecha).sort().at(-1);
+    abrirHoja(`<h2>¿Restaurar esta copia?</h2>
+      <p class="suave" style="margin-top:0">La copia tiene <b>${(d.cargas || []).length} cargas</b>${ultima ? ` (la última del ${fechaBonita(ultima)})` : ''}, ${Object.keys(d.notas || {}).length} notas y ${(d.lugares || []).length} sitios.
+      Ahora en este móvil tienes <b>${todas.length} cargas</b>.</p>
+      <p class="suave"><b>Lo de ahora se sustituye por lo de la copia.</b></p>
+      <div class="botones"><button class="boton" id="si">Sí, restaurar</button><button class="boton sec" data-cerrar>No, dejarlo como está</button></div>`, (caja) => {
+      caja.querySelector('#si').onclick = () => {
+        try { importar(texto); cerrarHoja(); aviso('Copia restaurada'); pintar(raiz); } catch (err) { aviso(err.message || 'No se pudo leer el archivo'); }
+      };
+    });
   };
 }
 
@@ -147,7 +161,10 @@ const ultimosKm = () => Math.max(0, ...cargas().map((x) => +x.km || 0)) || '';
 
 export function abrirFormCarga(c = {}) {
   const nueva = !c.id;
-  const v = { fecha: hoyISO(), lugar: 'casa', sitio: '', kwh: '', euros: '', desde: '', hasta: '', km: ajustes().kmActuales || '', nota: '', ...c };
+  // Con el coche conectado y un dato de la última hora: el % y los km ya los sabe el coche.
+  const coche = nueva && conectado() && ultimoDelCoche();
+  const reciente = coche && Date.now() - new Date(coche.fecha) < 3600e3 ? coche : null;
+  const v = { fecha: hoyISO(), lugar: 'casa', sitio: '', kwh: '', euros: '', desde: '', hasta: reciente?.pct ?? '', km: ajustes().kmActuales || '', nota: '', ...c };
   abrirHoja(`
     <h2>${nueva ? 'Apuntar carga' : 'Corregir carga'}</h2>
     <form id="form-carga">
@@ -204,7 +221,8 @@ export function abrirFormCarga(c = {}) {
       // Solo se repinta si estás en Gastos; desde el mapa o «Cargando ahora» te quedas donde estabas.
       if (location.hash.startsWith('#/diario')) pintar(raizActual);
     };
-    caja.querySelector('#borrar')?.addEventListener('click', () => {
+    caja.querySelector('#borrar')?.addEventListener('click', (e) => {
+      if (!e.target.dataset.seguro) { e.target.dataset.seguro = '1'; e.target.textContent = 'Toca otra vez para borrarla'; return; }
       borrarCarga(c.id); cerrarHoja(); aviso('Carga borrada'); if (location.hash.startsWith('#/diario')) pintar(raizActual);
     });
   });

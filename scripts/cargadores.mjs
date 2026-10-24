@@ -7,7 +7,8 @@
 //     scripts/reve.mjs cada hora en REVE_DIR; aquí solo se junta.
 // Se quitan duplicados (mismo sitio a menos de ~70 m). Uso: node scripts/cargadores.mjs [xml-local]
 // Lo ejecuta cada noche .github/workflows/publicar.yml.
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { TARJETA, RESERVABLE, APP, RFID, GRATIS, SIN_REGISTRO, CLIENTES, leerOsm, descargarOsm, clave, metros, vecinos, sumarEnchufes, marcaDe, aFila } from './comun.mjs';
 
@@ -196,9 +197,48 @@ async function juntarReve(sitios, rejilla) {
 }
 
 
-const local = process.argv[2];
-const xml = local ? await readFile(local, 'utf8') : await (await fetch(URL_OFICIAL)).text();
-const oficiales = leerOficial(xml);
+// El registro de la DGT a veces cae días enteros (22-24 oct 2026: «página no disponible»). Para que los precios de
+// REVE y los sitios nuevos sigan al día: 1) la DGT; 2) la última copia buena (se guarda comprimida en OSM_CACHE);
+// 3) los sitios oficiales de la lista ya publicada (el workflow la deja en datos/cargadores.json antes de empezar).
+async function registroOficial() {
+  const local = process.argv[2];
+  if (local) { const xml = await readFile(local, 'utf8'); return { oficiales: leerOficial(xml), xml }; }
+  const copia = process.env.OSM_CACHE ? join(process.env.OSM_CACHE, 'dgt.xml.gz') : null;
+  try {
+    const r = await fetch(URL_OFICIAL, { signal: AbortSignal.timeout(10 * 60e3) });
+    const xml = r.ok ? await r.text() : '';
+    const oficiales = leerOficial(xml);
+    if (oficiales.length >= 5000) {
+      if (copia) { await mkdir(process.env.OSM_CACHE, { recursive: true }); await writeFile(copia, gzipSync(xml)); }
+      return { oficiales, xml };
+    }
+    console.log(`La DGT no da el registro (HTTP ${r.status}, ${oficiales.length} sitios)`);
+  } catch (e) { console.log(`La DGT no responde: ${e.message}`); }
+  if (copia) {
+    try {
+      const xml = gunzipSync(await readFile(copia)).toString('utf8');
+      const oficiales = leerOficial(xml);
+      if (oficiales.length >= 5000) { console.log(`Uso la última copia buena de la DGT (${oficiales.length} sitios)`); return { oficiales, xml, deCopia: true }; }
+    } catch { /* sin copia todavía */ }
+  }
+  try {
+    const publicada = JSON.parse(await readFile(SALIDA, 'utf8'));
+    const oficiales = publicada.d.filter((f) => String(f[10]).includes('m')).map(deFilaPublicada);
+    console.log(`Uso los sitios oficiales de la lista publicada el ${publicada.fecha} (${oficiales.length})`);
+    return { oficiales, xml: '', deCopia: true };
+  } catch { return { oficiales: [] }; }
+}
+// Una fila publicada (ver aFila) vuelta a sitio, para juntarla otra vez con OSM y REVE.
+function deFilaPublicada(f) {
+  const enchufes = {};
+  for (const e of String(f[5] || '').split(',').filter(Boolean)) {
+    const m = e.match(/^([a-z]+)(\d+)(?::(\d+))?$/i);
+    if (m) enchufes[m[1]] = { n: +m[2], kw: +m[3] || 0 };
+  }
+  return { lat: f[0], lon: f[1], nombre: f[2], operador: f[3] || '', dir: f[8] || '', horario: f[7] || '', pago: f[6] || 0, enchufes, puntos: f[9] || 0, servicios: new Set(String(f[11] || '')), fuente: 'm', kwSitio: f[4] || 0 };
+}
+
+const { oficiales, xml = '', deCopia = false } = await registroOficial();
 if (oficiales.length < 5000) throw new Error(`El registro oficial trae muy pocos (${oficiales.length}); no se sobrescribe nada`);
 const osm = leerOsm(await descargarOsm('ES'));
 const { sitios, nuevos, completados, rejilla } = juntar(oficiales, osm);
@@ -207,6 +247,7 @@ const { sitios, nuevos, completados, rejilla } = juntar(oficiales, osm);
 const reve = await juntarReve(sitios, rejilla);
 
 const filas = sitios.map(aFila);
-const fecha = (xml.match(/<com:publicationTime>([^<]+)/) || [])[1]?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+// Con la copia, la lista es de hoy (OSM y REVE sí son de hoy) aunque el registro oficial sea de otro día.
+const fecha = (!deCopia && (xml.match(/<com:publicationTime>([^<]+)/) || [])[1]?.slice(0, 10)) || new Date().toISOString().slice(0, 10);
 await writeFile(SALIDA, JSON.stringify({ fecha, total: filas.length, ...(reve ? { reve } : {}), d: filas }));
 console.log(`Oficiales: ${oficiales.length} · OSM: ${osm.length} (${completados} ya estaban, ${nuevos} nuevos) · Total sitios: ${filas.length}`);

@@ -4,6 +4,7 @@ import { COCHE, CARGADORES_CASA, ajustes, bateria, cambiarAjuste, sesion, empeza
 import { horasAC, kwhRedAC, kwhRedDC, minutosDC, ventanaBarata, costeAhora, preciosTarifa, pctTrasMinutos, tramo } from '../calc.js';
 import { esc, num, euros, hora, duracion, preciosPVPC, campo, anillo, aviso } from '../comun.js';
 import { abrirFormCarga } from './diario.js';
+import { conectado, leerCoche, ultimoDelCoche, haceCuanto } from '../coche-vivo.js';
 
 let modo = 'casa', reloj = null, deCargador = null;
 
@@ -45,16 +46,21 @@ function ahora(el, raiz) {
   if (!s) return empezar(el, raiz);
   const pinta = () => {
     const min = (Date.now() - s.inicio) / 60e3;
-    const pct = Math.min(s.a, pctTrasMinutos(s.de, s.kw, s.ac, min));
+    // Con el coche conectado (MyChangan) y un dato reciente, manda lo que dice el coche; si no, la estimación.
+    const v = conectado() && ultimoDelCoche();
+    const real = v && v.pct != null && new Date(v.fecha).getTime() >= s.inicio - 5 * 60e3 && Date.now() - new Date(v.fecha) < 20 * 60e3 ? v : null;
+    const estimado = Math.min(s.a, pctTrasMinutos(s.de, s.kw, s.ac, min));
+    const pct = real ? Math.max(real.pct, s.de) : estimado;
     const kwh = s.ac ? kwhRedAC(s.de, pct) : kwhRedDC(s.de, pct);
     const total = s.ac ? horasAC(s.de, s.a, s.kw) * 60 : minutosDC(s.de, s.a, s.kw);
-    const fin = new Date(s.inicio + total * 60e3);
-    const hecho = pct >= s.a - 0.05;
+    const fin = real?.carga?.minutos ? new Date(new Date(real.fecha).getTime() + real.carga.minutos * 60e3) : new Date(s.inicio + total * 60e3);
+    const hecho = pct >= s.a - 0.05 || (real && real.carga?.estado && real.carga.estado !== 'cargando' && pct > s.de);
     el.innerHTML = `
       <section class="tarjeta heroe">
         <div class="anillo">${anillo(pct)}<div class="anillo-centro"><b>${Math.floor(pct)}<small>%</small></b><span>${hecho ? '¡lista!' : 'cargando'}</span></div></div>
         <div class="km-grande">${hecho ? 'Ya debería estar al ' + s.a + ' %' : `Al ${s.a} % sobre las <em>${hora(fin)}</em>`}</div>
-        <div class="muy-suave">${hecho ? 'Mira el coche y dale a «He terminado».' : `Faltan ${duracion(Math.max(0, total - min))} · ${esc(s.sitio || (s.lugar === 'casa' ? 'En casa' : 'En la calle'))} · ${num(s.kw, s.kw % 1 ? 1 : 0)} kW`}</div>
+        <div class="muy-suave">${hecho ? (real ? `El coche dice que ya no carga (${real.pct} %). Dale a «He terminado».` : 'Mira el coche y dale a «He terminado».') : `Faltan ${duracion(Math.max(0, (fin - Date.now()) / 60e3))} · ${esc(s.sitio || (s.lugar === 'casa' ? 'En casa' : 'En la calle'))} · ${num(s.kw, s.kw % 1 ? 1 : 0)} kW`}</div>
+        ${real ? `<div class="muy-suave" style="margin-top:4px">🔗 El % lo dice tu coche (${esc(haceCuanto(real.fecha))})</div>` : ''}
         <div class="rejilla" style="margin-top:14px;text-align:left">
           <div class="dato"><b>${duracion(min)}</b><span>enchufado</span></div>
           <div class="dato"><b>${num(kwh, 1)} kWh</b><span>cargados</span></div>
@@ -66,7 +72,7 @@ function ahora(el, raiz) {
         <button class="boton" id="fin">He terminado · apuntar en Gastos</button>
         <button class="boton peligro" id="cancelar">Cancelar (no apuntar nada)</button>
       </div>
-      <p class="muy-suave" style="margin-top:10px">Es una estimación con la curva de carga típica de tu coche: el % de verdad es el que marca el coche${COCHE.app ? ` o la app ${esc(COCHE.app)}` : ''}. Al apuntarla puedes corregirlo.</p>`;
+      ${real ? '' : `<p class="muy-suave" style="margin-top:10px">Es una estimación con la curva de carga típica de tu coche: el % de verdad es el que marca el coche${COCHE.app ? ` o la app ${esc(COCHE.app)}` : ''}. Al apuntarla puedes corregirlo.</p>`}`;
     el.querySelector('#fin').onclick = () => {
       terminarSesion(); clearInterval(reloj);
       abrirFormCarga({ lugar: s.lugar, sitio: s.sitio, desde: s.de, hasta: Math.round(pct), kwh: kwh.toFixed(1), euros: (kwh * s.precio).toFixed(2), operador: s.operador, cargadorK: s.cargadorK });
@@ -75,13 +81,18 @@ function ahora(el, raiz) {
     el.querySelector('#cancelar').onclick = () => { terminarSesion(); clearInterval(reloj); aviso('Carga cancelada'); pintar(raiz); };
   };
   pinta();
-  reloj = setInterval(() => { if (el.isConnected) pinta(); else clearInterval(reloj); }, 15000);
+  // Cada 15 s se repinta; al coche se le pregunta como mucho cada 3 min (leerCoche ya lo limita).
+  const alCoche = () => { if (conectado()) leerCoche().then(() => { if (el.isConnected && sesion()) pinta(); }).catch(() => {}); };
+  alCoche();
+  reloj = setInterval(() => { if (!el.isConnected) { clearInterval(reloj); return; } pinta(); alCoche(); }, 15000);
 }
 
 function empezar(el, raiz) {
   const a = ajustes();
   const pre = deCargador; deCargador = null;
-  let lugar = pre ? 'calle' : 'casa', kw = pre ? Math.min(pre.kw || 50, 400) : +a.cargadorCasa;
+  // Si el coche (MyChangan) dice que está cargando en rápida, se empieza en «calle».
+  const v = conectado() && ultimoDelCoche();
+  let lugar = pre || v?.carga?.dc ? 'calle' : 'casa', kw = pre ? Math.min(pre.kw || 50, 400) : lugar === 'calle' ? 150 : +a.cargadorCasa;
   const dibuja = () => {
     const casaSi = lugar === 'casa';
     el.innerHTML = `
